@@ -40,26 +40,11 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for name in \
-            GITKEEPR_BUILD_MODEL \
-            GITKEEPR_BUILD_VARIANT \
-            GITKEEPR_REVIEW_MODEL \
-            GITKEEPR_REVIEW_VARIANT \
-            GITKEEPR_MAX_CYCLES \
-            GITKEEPR_APP_CLIENT_ID; do
-            if [[ -z "${!name:-}" ]]; then
-              echo "::error::Missing repository variable: $name"
-              missing=1
-            fi
+          for name in GITKEEPR_BUILD_MODEL GITKEEPR_BUILD_VARIANT GITKEEPR_REVIEW_MODEL GITKEEPR_REVIEW_VARIANT GITKEEPR_MAX_CYCLES GITKEEPR_APP_CLIENT_ID; do
+            if [[ -z "${!name:-}" ]]; then echo "::error::Missing repository variable: $name"; missing=1; fi
           done
-          if [[ -z "${APP_PRIVATE_KEY:-}" ]]; then
-            echo "::error::Missing repository secret: GITKEEPR_APP_PRIVATE_KEY"
-            missing=1
-          fi
-          if ! [[ "${GITKEEPR_MAX_CYCLES:-}" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::GITKEEPR_MAX_CYCLES must be a positive integer"
-            missing=1
-          fi
+          if [[ -z "${APP_PRIVATE_KEY:-}" ]]; then echo "::error::Missing repository secret: GITKEEPR_APP_PRIVATE_KEY"; missing=1; fi
+          if ! [[ "${GITKEEPR_MAX_CYCLES:-}" =~ ^[1-9][0-9]*$ ]]; then echo "::error::GITKEEPR_MAX_CYCLES must be a positive integer"; missing=1; fi
           exit "$missing"
 
       - name: Add OpenCode to PATH
@@ -103,9 +88,8 @@ jobs:
               { name: 'gitkeepr:blocked', color: 'cf222e', description: 'GitKeepr loop stopped and needs human attention' },
             ]
             for (const label of labels) {
-              try {
-                await github.rest.issues.getLabel({ ...context.repo, name: label.name })
-              } catch (error) {
+              try { await github.rest.issues.getLabel({ ...context.repo, name: label.name }) }
+              catch (error) {
                 if (error.status !== 404) throw error
                 await github.rest.issues.createLabel({ ...context.repo, ...label })
               }
@@ -133,12 +117,8 @@ jobs:
             const allowedKinds = new Set(['pr_opened', 'pr_sync', 'comment', 'review', 'manual'])
             const fail = message => { core.setFailed(message); return false }
             const loginOf = item => String(item?.user?.login || '')
-            const isCopilot = item => {
-              const login = loginOf(item).toLowerCase()
-              return login === 'copilot' || login.startsWith('copilot-pull-request-reviewer')
-            }
-            const isTrustedHuman = item =>
-              item?.user?.type !== 'Bot' && trustedAssociations.has(String(item?.author_association || '').toUpperCase())
+            const isCopilot = item => { const login = loginOf(item).toLowerCase(); return login === 'copilot' || login.startsWith('copilot-pull-request-reviewer') }
+            const isTrustedHuman = item => item?.user?.type !== 'Bot' && trustedAssociations.has(String(item?.author_association || '').toUpperCase())
             const formatInline = comments => comments.map(comment => {
               const line = comment.line ?? comment.original_line
               const position = comment.position ?? comment.original_position
@@ -147,134 +127,71 @@ jobs:
               const location = `${comment.path || '(unknown path)'} (${locator}${side ? `, ${side}` : ''})`
               return `- ${location}\n  ${String(comment.body || '').trim().replace(/\n/g, '\n  ')}`
             })
-
             if (!Number.isSafeInteger(prNumber) || prNumber < 1) return fail('Invalid PR number')
             if (!allowedKinds.has(kind)) return fail(`Unsupported trigger kind: ${kind}`)
-
             const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: prNumber })
             const expectedRepo = `${context.repo.owner}/${context.repo.repo}`
-            if (pr.head.repo?.full_name !== expectedRepo) {
-              return fail(`Refusing fork PR ${pr.head.repo?.full_name || '(unknown)'}; expected ${expectedRepo}`)
-            }
-
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              ...context.repo, issue_number: prNumber, per_page: 100,
-            })
-
-            let triggerKey = ''
-            let triggerAuthor = ''
-            let triggerFeedback = ''
-            let reviewState = ''
-            let reviewHasFeedback = false
-
+            if (pr.head.repo?.full_name !== expectedRepo) return fail(`Refusing fork PR ${pr.head.repo?.full_name || '(unknown)'}; expected ${expectedRepo}`)
+            const comments = await github.paginate(github.rest.issues.listComments, { ...context.repo, issue_number: prNumber, per_page: 100 })
+            let triggerKey = '', triggerAuthor = '', triggerFeedback = '', reviewState = '', reviewHasFeedback = false
             if (kind === 'pr_opened') triggerKey = `pr-opened:${pr.head.sha}`
             if (kind === 'pr_sync') triggerKey = `pr-sync:${pr.head.sha}`
-
             if (kind === 'comment') {
               if (!/^\d+$/.test(sourceId)) return fail('Comment trigger requires a numeric trigger_source_id')
               const { data: comment } = await github.rest.issues.getComment({ ...context.repo, comment_id: Number(sourceId) })
               if (Number(comment.issue_url.split('/').pop()) !== prNumber) return fail('Trigger comment does not belong to this PR')
               if (!isTrustedHuman(comment)) return fail('Trigger comment is not from a trusted human collaborator')
-              if (String(comment.body || '').includes('<!-- gitkeepr:no-build -->')) {
-                return fail('gitkeepr:no-build comments are context only and cannot trigger Build')
-              }
-              triggerKey = `comment:${comment.id}`
-              triggerAuthor = loginOf(comment)
-              triggerFeedback = String(comment.body || '').trim()
+              if (String(comment.body || '').includes('<!-- gitkeepr:no-build -->')) return fail('gitkeepr:no-build comments are context only and cannot trigger Build')
+              triggerKey = `comment:${comment.id}`; triggerAuthor = loginOf(comment); triggerFeedback = String(comment.body || '').trim()
             }
-
             if (kind === 'review') {
               if (!/^\d+$/.test(sourceId)) return fail('Review trigger requires a numeric trigger_source_id')
               const { data: review } = await github.rest.pulls.getReview({ ...context.repo, pull_number: prNumber, review_id: Number(sourceId) })
               if (!isCopilot(review) && !isTrustedHuman(review)) return fail('Trigger review is not trusted')
               if (loginOf(review) === process.env.BOT_LOGIN) return fail('GitKeepr bot reviews cannot trigger GitKeepr')
-              const inline = await github.paginate(github.rest.pulls.listCommentsForReview, {
-                ...context.repo, pull_number: prNumber, review_id: review.id, per_page: 100,
-              })
+              const inline = await github.paginate(github.rest.pulls.listCommentsForReview, { ...context.repo, pull_number: prNumber, review_id: review.id, per_page: 100 })
               const body = String(review.body || '').trim()
-              reviewState = String(review.state || '').toUpperCase()
-              reviewHasFeedback = Boolean(body || inline.length)
-              triggerKey = `review:${review.id}`
-              triggerAuthor = loginOf(review)
-              const parts = [
-                `Submitted pull request review from @${triggerAuthor}`,
-                `State: ${reviewState || '(unknown)'}`,
-                `Reviewed commit: ${review.commit_id || '(unknown)'}`,
-              ]
+              reviewState = String(review.state || '').toUpperCase(); reviewHasFeedback = Boolean(body || inline.length)
+              triggerKey = `review:${review.id}`; triggerAuthor = loginOf(review)
+              const parts = [`Submitted pull request review from @${triggerAuthor}`, `State: ${reviewState || '(unknown)'}`, `Reviewed commit: ${review.commit_id || '(unknown)'}`]
               if (body) parts.push('', 'Review body:', body)
               if (inline.length) parts.push('', 'Inline review comments:', ...formatInline(inline))
               if (!body && !inline.length) parts.push('', '(Review contains no body or inline comments.)')
               triggerFeedback = parts.join('\n')
             }
-
             if (kind === 'manual' && sourceId) return fail('Manual trigger must not supply trigger_source_id')
-
             const handledMarker = triggerKey ? `<!-- gitkeepr-trigger:v1 key=${triggerKey} -->` : ''
             const duplicate = Boolean(handledMarker && comments.some(c => String(c.body || '').includes(handledMarker)))
-
-            core.setOutput('head_ref', pr.head.ref)
-            core.setOutput('head_sha', pr.head.sha)
-            core.setOutput('base_ref', pr.base.ref)
-            core.setOutput('trigger_key', triggerKey)
-            core.setOutput('trigger_author', triggerAuthor)
-            core.setOutput('review_state', reviewState)
-            core.setOutput('review_has_feedback', reviewHasFeedback ? 'true' : 'false')
+            core.setOutput('head_ref', pr.head.ref); core.setOutput('head_sha', pr.head.sha); core.setOutput('base_ref', pr.base.ref)
+            core.setOutput('trigger_key', triggerKey); core.setOutput('trigger_author', triggerAuthor)
+            core.setOutput('review_state', reviewState); core.setOutput('review_has_feedback', reviewHasFeedback ? 'true' : 'false')
             core.setOutput('duplicate', duplicate ? 'true' : 'false')
-            if (duplicate) {
-              core.notice(`Trigger ${triggerKey} was already handled; skipping agent work`)
-              return
-            }
-
-            const systemMarkers = [
-              '<!-- gitkeepr-system-review:v1',
-              '<!-- gitkeepr-system-reply:v1',
-              '<!-- gitkeepr-system-blocked:v1',
-              '<!-- gitkeepr-trigger:v1',
-            ]
+            if (duplicate) { core.notice(`Trigger ${triggerKey} was already handled; skipping agent work`); return }
+            const systemMarkers = ['<!-- gitkeepr-system-review:v1', '<!-- gitkeepr-system-reply:v1', '<!-- gitkeepr-system-blocked:v1', '<!-- gitkeepr-trigger:v1']
             const discussionEntries = []
             for (const comment of comments) {
               if (!isTrustedHuman(comment)) continue
               const body = String(comment.body || '').trim()
               if (!body || systemMarkers.some(marker => body.includes(marker))) continue
-              discussionEntries.push({
-                at: comment.created_at || '',
-                text: [`### PR conversation comment by @${loginOf(comment)}`, `Created: ${comment.created_at || '(unknown)'}`, '', body].join('\n'),
-              })
+              discussionEntries.push({ at: comment.created_at || '', text: [`### PR conversation comment by @${loginOf(comment)}`, `Created: ${comment.created_at || '(unknown)'}`, '', body].join('\n') })
             }
-
-            const reviews = await github.paginate(github.rest.pulls.listReviews, {
-              ...context.repo, pull_number: prNumber, per_page: 100,
-            })
+            const reviews = await github.paginate(github.rest.pulls.listReviews, { ...context.repo, pull_number: prNumber, per_page: 100 })
             for (const review of reviews) {
               if (!isCopilot(review) && !isTrustedHuman(review)) continue
               if (loginOf(review) === process.env.BOT_LOGIN) continue
-              const inline = await github.paginate(github.rest.pulls.listCommentsForReview, {
-                ...context.repo, pull_number: prNumber, review_id: review.id, per_page: 100,
-              })
-              const body = String(review.body || '').trim()
-              if (!body && !inline.length) continue
-              const parts = [
-                `### Pull request review by @${loginOf(review)}`,
-                `State: ${String(review.state || '(unknown)').toUpperCase()}`,
-                `Reviewed commit: ${review.commit_id || '(unknown)'}`,
-                `Submitted: ${review.submitted_at || '(unknown)'}`,
-              ]
+              const inline = await github.paginate(github.rest.pulls.listCommentsForReview, { ...context.repo, pull_number: prNumber, review_id: review.id, per_page: 100 })
+              const body = String(review.body || '').trim(); if (!body && !inline.length) continue
+              const parts = [`### Pull request review by @${loginOf(review)}`, `State: ${String(review.state || '(unknown)').toUpperCase()}`, `Reviewed commit: ${review.commit_id || '(unknown)'}`, `Submitted: ${review.submitted_at || '(unknown)'}`]
               if (body) parts.push('', 'Review body:', body)
               if (inline.length) parts.push('', 'Inline review comments:', ...formatInline(inline))
               discussionEntries.push({ at: review.submitted_at || '', text: parts.join('\n') })
             }
             discussionEntries.sort((a, b) => String(a.at).localeCompare(String(b.at)))
-
             const reviewPrefix = `<!-- gitkeepr-system-review:v1 head=${pr.head.sha} verdict=`
             const latestReview = [...comments].reverse().find(c => String(c.body || '').includes(reviewPrefix))
             fs.writeFileSync(process.env.INITIAL_REVIEW_FILE, latestReview?.body || '')
             fs.writeFileSync(process.env.TRIGGER_FEEDBACK_FILE, triggerFeedback)
-            fs.writeFileSync(
-              process.env.PR_DISCUSSION_FILE,
-              (discussionEntries.length
-                ? discussionEntries.map(entry => entry.text).join('\n\n---\n\n')
-                : '(No trusted human or Copilot PR discussion feedback found.)') + '\n'
-            )
+            fs.writeFileSync(process.env.PR_DISCUSSION_FILE, (discussionEntries.length ? discussionEntries.map(entry => entry.text).join('\n\n---\n\n') : '(No trusted human or Copilot PR discussion feedback found.)') + '\n')
             core.info(`Prepared ${discussionEntries.length} trusted PR discussion entries`)
 
       - name: Duplicate trigger already handled
@@ -302,10 +219,86 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           git checkout -B "$HEAD_REF" "$EXPECTED_HEAD"
 
-      - name: Bootstrap implementation notice
+      - name: Run first Build turn
+        id: build
         if: steps.context.outputs.duplicate != 'true'
         shell: bash
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          TRIGGER_KIND: ${{ inputs.trigger_kind }}
+          TRIGGER_AUTHOR: ${{ steps.context.outputs.trigger_author }}
+          HEAD_REF: ${{ steps.context.outputs.head_ref }}
+          BASE_REF: ${{ steps.context.outputs.base_ref }}
+          TRIGGER_FEEDBACK_FILE: ${{ runner.temp }}/gitkeepr-trigger-feedback.md
+          PR_DISCUSSION_FILE: ${{ runner.temp }}/gitkeepr-pr-discussion.md
+          INITIAL_REVIEW_FILE: ${{ runner.temp }}/gitkeepr-initial-review.md
+          BUILD_EVENTS: ${{ runner.temp }}/gitkeepr-build.jsonl
+          BUILD_TEXT: ${{ runner.temp }}/gitkeepr-build.md
+          APP_BOT_NAME: ${{ steps.app-user.outputs.name }}
+          APP_BOT_EMAIL: ${{ steps.app-user.outputs.email }}
         run: |
-          echo "Authoritative trigger checks and trusted context preparation passed."
-          echo "The Build/Review execution body is the next bootstrap iteration."
+          set -euo pipefail
+          git config user.name "$APP_BOT_NAME"
+          git config user.email "$APP_BOT_EMAIL"
+          trigger_feedback="$(cat "$TRIGGER_FEEDBACK_FILE" 2>/dev/null || true)"
+          pr_discussion="$(cat "$PR_DISCUSSION_FILE" 2>/dev/null || true)"
+          previous_review="$(cat "$INITIAL_REVIEW_FILE" 2>/dev/null || true)"
+          build_prompt="$(cat <<EOF
+          You are the Build agent for pull request #${PR_NUMBER}. Work directly in the checked-out repository.
+
+          Read .ai/plan.md if present, current code and tests, the latest trusted trigger feedback, trusted PR discussion, and prior GitKeepr review below. Verify stale findings against current HEAD. If no trigger feedback changes scope and multiple planned tasks remain, implement only the first unfinished logical task. Run relevant tests chosen for this repository/task. Do not commit, push, create branches, or modify GitHub metadata; the workflow owns Git/GitHub operations.
+
+          Trigger kind: ${TRIGGER_KIND}
+          Latest trusted feedback from @${TRIGGER_AUTHOR}:
+          ${trigger_feedback}
+
+          Trusted PR discussion:
+          ${pr_discussion}
+
+          Prior GitKeepr review for current HEAD:
+          ${previous_review}
+
+          Finish with a concise human-readable response. If a PR comment only needs an answer and no repository change is warranted, answer it directly without editing files.
+          EOF
+          )"
+          if ! opencode run --auto --agent build --model "$GITKEEPR_BUILD_MODEL" --variant "$GITKEEPR_BUILD_VARIANT" --format json "$build_prompt" > "$BUILD_EVENTS"; then
+            echo "::error::Build agent failed"
+            exit 1
+          fi
+          BUILD_EVENTS="$BUILD_EVENTS" BUILD_TEXT="$BUILD_TEXT" python3 - <<'PY'
+          import json, os, pathlib
+          texts=[]
+          for raw in pathlib.Path(os.environ['BUILD_EVENTS']).read_text().splitlines():
+              try: event=json.loads(raw)
+              except json.JSONDecodeError: continue
+              if event.get('type') == 'text':
+                  text=(event.get('part') or {}).get('text','').strip()
+                  if text: texts.append(text)
+          if not texts: raise SystemExit('No text response found in OpenCode Build JSON stream')
+          pathlib.Path(os.environ['BUILD_TEXT']).write_text(texts[-1].strip()+'\n')
+          PY
+          changed=false
+          if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then changed=true; fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          if [ "$changed" = false ]; then
+            echo "Build made no repository changes."
+            exit 0
+          fi
+          git add -A
+          git commit -m "gitkeepr: build"
+          git push origin "HEAD:${HEAD_REF}"
+          echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build phase bootstrap boundary
+        if: steps.context.outputs.duplicate != 'true'
+        shell: bash
+        env:
+          CHANGED: ${{ steps.build.outputs.changed }}
+        run: |
+          echo "Build execution is now active and verified changes are pushed by the workflow."
+          echo "Review/verdict, status finalization, direct replies, and successful trigger markers are not enabled yet."
+          echo "No trigger is marked processed in this incomplete bootstrap state."
+          if [ "$CHANGED" = "true" ]; then
+            echo "::warning::Build pushed a change, but Review is not yet ported; human review is required."
+          fi
           exit 1
