@@ -35,14 +35,26 @@ class WorkflowContractTests(unittest.TestCase):
         after_context = CORE.split("- name: Duplicate trigger already handled", 1)[1]
         self.assertNotIn("gitkeepr-trigger:v1 key=", after_context)
 
-    def test_caller_rejects_forks_and_bot_sync(self):
+    def test_caller_rejects_forks_and_bot_sync_without_hardcoded_identity(self):
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", CALLER)
-        self.assertIn("github.actor != 'gitkeepr-githubapp[bot]'", CALLER)
+        self.assertIn("github.event.sender.type != 'Bot'", CALLER)
+        self.assertNotIn("gitkeepr-githubapp[bot]", CALLER)
 
     def test_caller_comment_trust_is_conservative(self):
         self.assertIn("github.event.comment.user.type != 'Bot'", CALLER)
         self.assertIn('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]', CALLER)
         self.assertIn("<!-- gitkeepr:no-build -->", CALLER)
+
+    def test_build_uses_configured_model_and_variant(self):
+        build = CORE.split("- name: Run first Build turn", 1)[1]
+        self.assertIn('--model "$GITKEEPR_BUILD_MODEL"', build)
+        self.assertIn('--variant "$GITKEEPR_BUILD_VARIANT"', build)
+
+    def test_build_does_not_own_git_operations(self):
+        build = CORE.split("- name: Run first Build turn", 1)[1]
+        self.assertIn("Do not commit, push, create branches, or modify GitHub metadata", build)
+        self.assertIn('git commit -m "gitkeepr: build"', build)
+        self.assertIn('git push origin "HEAD:${HEAD_REF}"', build)
 
 
 if __name__ == "__main__":
