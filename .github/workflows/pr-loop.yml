@@ -36,7 +36,7 @@ jobs:
       - name: Validate repository configuration
         shell: bash
         env:
-          APP_PRIVATE_KEY: ${{ secrets.app_private_key }}
+          APP_PRIVATE_KEY: ${{ secrets.app_private_key || secrets.GITKEEPR_APP_PRIVATE_KEY }}
         run: |
           set -euo pipefail
           missing=0
@@ -56,7 +56,7 @@ jobs:
         uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ vars.GITKEEPR_APP_CLIENT_ID }}
-          private-key: ${{ secrets.app_private_key }}
+          private-key: ${{ secrets.app_private_key || secrets.GITKEEPR_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-issues: write
           permission-pull-requests: write
@@ -257,7 +257,6 @@ jobs:
 
           Prior GitKeepr review for current HEAD:
           ${previous_review}
-
           Finish with a concise human-readable response. If a PR comment only needs an answer and no repository change is warranted, answer it directly without editing files.
           EOF
           )"
