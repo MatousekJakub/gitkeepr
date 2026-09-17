@@ -238,7 +238,7 @@ server_doctor() {
   esac
 
   local cmd
-  for cmd in curl git jq tar gh; do
+  for cmd in curl git jq tar gh python3; do
     if command -v "$cmd" >/dev/null 2>&1; then
       say "OK    $cmd available"
     else
