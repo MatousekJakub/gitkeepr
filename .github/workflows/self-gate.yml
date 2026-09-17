@@ -1,0 +1,94 @@
+name: GitKeepr Self-Development Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  pull_request_review:
+    types: [submitted]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number
+        required: true
+        type: number
+
+permissions:
+  actions: write
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       (github.event.action == 'opened' ||
+        (github.event.action == 'synchronize' && github.event.sender.type != 'Bot'))) ||
+      (github.event_name == 'pull_request_review' &&
+       github.event.action == 'submitted' &&
+       (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association) ||
+        startsWith(github.event.review.user.login, 'copilot-pull-request-reviewer'))) ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       github.event.comment.user.type != 'Bot' &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+       !contains(github.event.comment.body, '<!-- gitkeepr:no-build -->') &&
+       !contains(github.event.comment.body, '<!-- gitkeepr-system:'))
+    steps:
+      - name: Verify same-repository PR and dispatch candidate core
+        uses: actions/github-script@v9
+        env:
+          MANUAL_PR_NUMBER: ${{ inputs.pr_number }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const event = context.eventName
+            const payload = context.payload
+            const prNumber = event === 'workflow_dispatch'
+              ? Number(process.env.MANUAL_PR_NUMBER)
+              : event === 'issue_comment'
+                ? Number(payload.issue?.number)
+                : Number(payload.pull_request?.number)
+
+            if (!Number.isSafeInteger(prNumber) || prNumber < 1) {
+              core.setFailed('Could not resolve a valid pull request number')
+              return
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: prNumber,
+            })
+            const expectedRepo = `${context.repo.owner}/${context.repo.repo}`
+            if (pr.head.repo?.full_name !== expectedRepo) {
+              core.notice(`Ignoring fork PR ${pr.head.repo?.full_name || '(unknown)'}; persistent runner will not execute it`)
+              return
+            }
+
+            let triggerKind = 'manual'
+            let triggerSourceId = ''
+            if (event === 'pull_request') {
+              triggerKind = payload.action === 'synchronize' ? 'pr_sync' : 'pr_opened'
+            } else if (event === 'pull_request_review') {
+              triggerKind = 'review'
+              triggerSourceId = String(payload.review?.id || '')
+            } else if (event === 'issue_comment') {
+              triggerKind = 'comment'
+              triggerSourceId = String(payload.comment?.id || '')
+            }
+
+            await github.rest.actions.createWorkflowDispatch({
+              ...context.repo,
+              workflow_id: 'pr-loop.yml',
+              ref: pr.head.ref,
+              inputs: {
+                pr_number: String(prNumber),
+                trigger_kind: triggerKind,
+                trigger_source_id: triggerSourceId,
+              },
+            })
+            core.info(`Dispatched candidate pr-loop.yml from ${pr.head.ref} for PR #${prNumber}`)
