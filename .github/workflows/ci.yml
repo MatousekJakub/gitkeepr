@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run workflow contract tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Check shell syntax
+        run: |
+          bash -n bin/gitkeepr
+          bash -n install.sh
