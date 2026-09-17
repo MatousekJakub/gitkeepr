@@ -6,12 +6,6 @@ on:
       pr_number: { required: true, type: number }
       trigger_kind: { required: true, type: string }
       trigger_source_id: { required: false, type: string, default: '' }
-      build_model: { required: true, type: string }
-      build_variant: { required: true, type: string }
-      review_model: { required: true, type: string }
-      review_variant: { required: true, type: string }
-      max_cycles: { required: true, type: number }
-      app_client_id: { required: true, type: string }
     secrets:
       app_private_key: { required: true }
   workflow_dispatch:
@@ -19,12 +13,6 @@ on:
       pr_number: { required: true, type: number }
       trigger_kind: { required: true, type: string }
       trigger_source_id: { required: false, type: string, default: '' }
-      build_model: { required: true, type: string }
-      build_variant: { required: true, type: string }
-      review_model: { required: true, type: string }
-      review_variant: { required: true, type: string }
-      max_cycles: { required: true, type: number }
-      app_client_id: { required: true, type: string }
 
 permissions:
   contents: read
@@ -37,11 +25,47 @@ jobs:
   loop:
     runs-on: [self-hosted, linux, gitkeepr]
     timeout-minutes: 90
+    env:
+      GITKEEPR_BUILD_MODEL: ${{ vars.GITKEEPR_BUILD_MODEL }}
+      GITKEEPR_BUILD_VARIANT: ${{ vars.GITKEEPR_BUILD_VARIANT }}
+      GITKEEPR_REVIEW_MODEL: ${{ vars.GITKEEPR_REVIEW_MODEL }}
+      GITKEEPR_REVIEW_VARIANT: ${{ vars.GITKEEPR_REVIEW_VARIANT }}
+      GITKEEPR_MAX_CYCLES: ${{ vars.GITKEEPR_MAX_CYCLES }}
+      GITKEEPR_APP_CLIENT_ID: ${{ vars.GITKEEPR_APP_CLIENT_ID }}
     steps:
+      - name: Validate repository configuration
+        shell: bash
+        env:
+          APP_PRIVATE_KEY: ${{ secrets.app_private_key }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in \
+            GITKEEPR_BUILD_MODEL \
+            GITKEEPR_BUILD_VARIANT \
+            GITKEEPR_REVIEW_MODEL \
+            GITKEEPR_REVIEW_VARIANT \
+            GITKEEPR_MAX_CYCLES \
+            GITKEEPR_APP_CLIENT_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing repository variable: $name"
+              missing=1
+            fi
+          done
+          if [[ -z "${APP_PRIVATE_KEY:-}" ]]; then
+            echo "::error::Missing repository secret: GITKEEPR_APP_PRIVATE_KEY"
+            missing=1
+          fi
+          if ! [[ "${GITKEEPR_MAX_CYCLES:-}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::GITKEEPR_MAX_CYCLES must be a positive integer"
+            missing=1
+          fi
+          exit "$missing"
+
       - name: Bootstrap implementation notice
         shell: bash
         run: |
-          echo "GitKeepr reusable workflow contract is installed."
+          echo "GitKeepr reusable workflow contract and repository configuration are valid."
           echo "The tested Build/Review loop is intentionally being ported in follow-up bootstrap iterations."
           echo "See docs/implementation-plan.md in the GitKeepr repository."
           exit 1
