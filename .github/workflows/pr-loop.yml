@@ -1,0 +1,47 @@
+name: GitKeepr PR Loop
+
+on:
+  workflow_call:
+    inputs:
+      pr_number: { required: true, type: number }
+      trigger_kind: { required: true, type: string }
+      trigger_source_id: { required: false, type: string, default: '' }
+      build_model: { required: true, type: string }
+      build_variant: { required: true, type: string }
+      review_model: { required: true, type: string }
+      review_variant: { required: true, type: string }
+      max_cycles: { required: true, type: number }
+      app_client_id: { required: true, type: string }
+    secrets:
+      app_private_key: { required: true }
+  workflow_dispatch:
+    inputs:
+      pr_number: { required: true, type: number }
+      trigger_kind: { required: true, type: string }
+      trigger_source_id: { required: false, type: string, default: '' }
+      build_model: { required: true, type: string }
+      build_variant: { required: true, type: string }
+      review_model: { required: true, type: string }
+      review_variant: { required: true, type: string }
+      max_cycles: { required: true, type: number }
+      app_client_id: { required: true, type: string }
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitkeepr-pr-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  loop:
+    runs-on: [self-hosted, linux, gitkeepr]
+    timeout-minutes: 90
+    steps:
+      - name: Bootstrap implementation notice
+        shell: bash
+        run: |
+          echo "GitKeepr reusable workflow contract is installed."
+          echo "The tested Build/Review loop is intentionally being ported in follow-up bootstrap iterations."
+          echo "See docs/implementation-plan.md in the GitKeepr repository."
+          exit 1

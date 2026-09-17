@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+VERSION="0.1.0-bootstrap"
+RAW_BASE="${GITKEEPR_RAW_BASE:-https://raw.githubusercontent.com/MatousekJakub/gitkeepr/main}"
+WORKFLOW_PATH=".github/workflows/gitkeepr.yml"
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+require_cmd() { command -v "$1" >/dev/null 2>&1 || die "$1 is required. Install it, then run GitKeepr again."; }
+
+usage() {
+  cat <<'USAGE'
+GitKeepr
+
+Usage:
+  gitkeepr init
+  gitkeepr doctor
+  gitkeepr server init
+  gitkeepr server doctor
+  gitkeepr runner add OWNER/REPO
+  gitkeepr runner remove OWNER/REPO
+  gitkeepr version
+
+Bootstrap status:
+  Project init is implemented first. Server/runner lifecycle commands are
+  intentionally introduced incrementally; unfinished commands fail clearly.
+USAGE
+}
+
+repo_name() {
+  gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || return 1
+}
+
+repo_visibility() {
+  gh repo view --json visibility -q .visibility 2>/dev/null || return 1
+}
+
+current_var() {
+  local repo="$1" name="$2"
+  gh variable get "$name" -R "$repo" --json value -q .value 2>/dev/null || true
+}
+
+prompt_value() {
+  local prompt="$1" default="$2" value
+  read -r -p "$prompt [$default]: " value
+  printf '%s' "${value:-$default}"
+}
+
+project_init() {
+  require_cmd git
+  require_cmd gh
+  require_cmd curl
+  git rev-parse --show-toplevel >/dev/null 2>&1 || die "Run 'gitkeepr init' inside a Git repository."
+  gh auth status >/dev/null 2>&1 || die "GitHub CLI is not authenticated. Run 'gh auth login', then try again."
+
+  local repo visibility
+  repo="$(repo_name)" || die "Could not resolve the GitHub repository. Ensure the checkout has a GitHub remote usable by 'gh repo view'."
+  visibility="$(repo_visibility)" || die "Could not determine repository visibility for $repo."
+  if [[ "${visibility,,}" == "public" ]]; then
+    die "Standard GitKeepr V1 setup does not support public target repositories with persistent self-hosted runners."
+  fi
+
+  say "Repository: $repo"
+  say ""
+  say "Before continuing, add this repository to the GitKeepr GitHub App under 'Selected repositories'."
+  local app_ok
+  read -r -p "Is the GitKeepr App installed for this repository? [y/N]: " app_ok
+  [[ "$app_ok" =~ ^[Yy]$ ]] || die "Add $repo to the GitKeepr GitHub App installation, then run 'gitkeepr init' again."
+
+  say ""
+  say "Hint: available models depend on providers configured on the runner server."
+  say "Check them on the VPS with: sudo -iu github-runner opencode models"
+  say ""
+
+  local build_model build_variant review_model review_variant max_cycles current
+  current="$(current_var "$repo" GITKEEPR_BUILD_MODEL || true)"
+  build_model="$(prompt_value "Build model" "${current:-openai/gpt-5.6-luna}")"
+  current="$(current_var "$repo" GITKEEPR_BUILD_VARIANT || true)"
+  build_variant="$(prompt_value "Build variant" "${current:-high}")"
+  current="$(current_var "$repo" GITKEEPR_REVIEW_MODEL || true)"
+  review_model="$(prompt_value "Review model" "${current:-openai/gpt-5.6-sol}")"
+  current="$(current_var "$repo" GITKEEPR_REVIEW_VARIANT || true)"
+  review_variant="$(prompt_value "Review variant" "${current:-high}")"
+  current="$(current_var "$repo" GITKEEPR_MAX_CYCLES || true)"
+  max_cycles="$(prompt_value "Max cycles" "${current:-15}")"
+  [[ "$max_cycles" =~ ^[1-9][0-9]*$ ]] || die "Max cycles must be a positive integer."
+
+  gh variable set GITKEEPR_BUILD_MODEL -R "$repo" --body "$build_model"
+  gh variable set GITKEEPR_BUILD_VARIANT -R "$repo" --body "$build_variant"
+  gh variable set GITKEEPR_REVIEW_MODEL -R "$repo" --body "$review_model"
+  gh variable set GITKEEPR_REVIEW_VARIANT -R "$repo" --body "$review_variant"
+  gh variable set GITKEEPR_MAX_CYCLES -R "$repo" --body "$max_cycles"
+
+  local tmp replace
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' RETURN
+  curl -fsSL "$RAW_BASE/templates/gitkeepr.yml" -o "$tmp"
+  mkdir -p "$(dirname "$WORKFLOW_PATH")"
+
+  if [[ -f "$WORKFLOW_PATH" ]] && ! cmp -s "$tmp" "$WORKFLOW_PATH"; then
+    say ""
+    say "Existing $WORKFLOW_PATH differs from the current GitKeepr template:"
+    diff -u "$WORKFLOW_PATH" "$tmp" || true
+    read -r -p "Replace it? [y/N]: " replace
+    if [[ "$replace" =~ ^[Yy]$ ]]; then
+      cp "$tmp" "$WORKFLOW_PATH"
+      say "Replaced $WORKFLOW_PATH"
+    else
+      say "Kept existing $WORKFLOW_PATH"
+    fi
+  elif [[ ! -f "$WORKFLOW_PATH" ]]; then
+    cp "$tmp" "$WORKFLOW_PATH"
+    say "Created $WORKFLOW_PATH"
+  else
+    say "$WORKFLOW_PATH is already current."
+  fi
+  rm -f "$tmp"
+  trap - RETURN
+
+  say ""
+  say "Repository-side setup complete. GitKeepr did not stage or commit anything."
+  say "Current working-tree status:"
+  git status --short || true
+  say ""
+  say "On the runner server, run:"
+  say "  gitkeepr runner add $repo"
+}
+
+project_doctor() {
+  require_cmd git
+  require_cmd gh
+  local ok=0 repo
+  if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
+    say "FAIL  Git repository not detected"
+    return 1
+  fi
+  say "OK    Git repository detected"
+  if gh auth status >/dev/null 2>&1; then say "OK    gh authenticated"; else say "FAIL  gh not authenticated"; ok=1; fi
+  repo="$(repo_name 2>/dev/null || true)"
+  if [[ -n "$repo" ]]; then say "OK    GitHub repository: $repo"; else say "FAIL  GitHub repository unresolved"; ok=1; fi
+  if [[ -f "$WORKFLOW_PATH" ]]; then say "OK    $WORKFLOW_PATH exists"; else say "FAIL  $WORKFLOW_PATH missing"; ok=1; fi
+  return "$ok"
+}
+
+server_unimplemented() {
+  die "This server/runner command is not implemented in the first light bootstrap iteration yet. See docs/implementation-plan.md."
+}
+
+case "${1:-}" in
+  init) shift; [[ $# -eq 0 ]] || die "Unexpected arguments to init."; project_init ;;
+  doctor) shift; [[ $# -eq 0 ]] || die "Unexpected arguments to doctor."; project_doctor ;;
+  server)
+    shift
+    case "${1:-}" in
+      init|doctor) server_unimplemented ;;
+      *) usage; exit 2 ;;
+    esac
+    ;;
+  runner)
+    shift
+    case "${1:-}" in
+      add|remove) server_unimplemented ;;
+      *) usage; exit 2 ;;
+    esac
+    ;;
+  version|--version|-v) say "$VERSION" ;;
+  help|--help|-h|"") usage ;;
+  *) usage; exit 2 ;;
+esac
