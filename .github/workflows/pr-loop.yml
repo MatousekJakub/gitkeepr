@@ -62,10 +62,154 @@ jobs:
           fi
           exit "$missing"
 
+      - name: Add OpenCode to PATH
+        shell: bash
+        run: echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+
+      - name: Create GitKeepr App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.GITKEEPR_APP_CLIENT_ID }}
+          private-key: ${{ secrets.app_private_key }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      - name: Resolve GitKeepr bot identity
+        id: app-user
+        uses: actions/github-script@v9
+        env:
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const username = `${process.env.APP_SLUG}[bot]`
+            const { data: user } = await github.rest.users.getByUsername({ username })
+            core.setOutput('login', username)
+            core.setOutput('name', username)
+            core.setOutput('email', `${user.id}+${username}@users.noreply.github.com`)
+
+      - name: Ensure GitKeepr status labels
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const labels = [
+              { name: 'gitkeepr:building', color: '1f883d', description: 'GitKeepr Build agent is working on this PR' },
+              { name: 'gitkeepr:reviewing', color: '8250df', description: 'GitKeepr Review agent is checking this PR' },
+              { name: 'gitkeepr:waiting-human', color: '0969da', description: 'GitKeepr loop is complete and waiting for human input' },
+              { name: 'gitkeepr:blocked', color: 'cf222e', description: 'GitKeepr loop stopped and needs human attention' },
+            ]
+            for (const label of labels) {
+              try {
+                await github.rest.issues.getLabel({ ...context.repo, name: label.name })
+              } catch (error) {
+                if (error.status !== 404) throw error
+                await github.rest.issues.createLabel({ ...context.repo, ...label })
+              }
+            }
+
+      - name: Resolve and authorize trigger
+        id: context
+        uses: actions/github-script@v9
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          TRIGGER_KIND: ${{ inputs.trigger_kind }}
+          TRIGGER_SOURCE_ID: ${{ inputs.trigger_source_id }}
+          BOT_LOGIN: ${{ steps.app-user.outputs.login }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const prNumber = Number(process.env.PR_NUMBER)
+            const kind = String(process.env.TRIGGER_KIND || '')
+            const sourceId = String(process.env.TRIGGER_SOURCE_ID || '')
+            const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR'])
+            const allowedKinds = new Set(['pr_opened', 'pr_sync', 'comment', 'review', 'manual'])
+            const fail = message => { core.setFailed(message); return false }
+
+            if (!Number.isSafeInteger(prNumber) || prNumber < 1) return fail('Invalid PR number')
+            if (!allowedKinds.has(kind)) return fail(`Unsupported trigger kind: ${kind}`)
+
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: prNumber })
+            const expectedRepo = `${context.repo.owner}/${context.repo.repo}`
+            if (pr.head.repo?.full_name !== expectedRepo) {
+              return fail(`Refusing fork PR ${pr.head.repo?.full_name || '(unknown)'}; expected ${expectedRepo}`)
+            }
+
+            let triggerKey = ''
+            if (kind === 'pr_opened') triggerKey = `pr-opened:${pr.head.sha}`
+            if (kind === 'pr_sync') triggerKey = `pr-sync:${pr.head.sha}`
+
+            if (kind === 'comment') {
+              if (!/^\d+$/.test(sourceId)) return fail('Comment trigger requires a numeric trigger_source_id')
+              const { data: comment } = await github.rest.issues.getComment({ ...context.repo, comment_id: Number(sourceId) })
+              if (Number(comment.issue_url.split('/').pop()) !== prNumber) return fail('Trigger comment does not belong to this PR')
+              if (comment.user?.type === 'Bot' || !trustedAssociations.has(String(comment.author_association || '').toUpperCase())) {
+                return fail('Trigger comment is not from a trusted human collaborator')
+              }
+              if (String(comment.body || '').includes('<!-- gitkeepr:no-build -->')) {
+                return fail('gitkeepr:no-build comments are context only and cannot trigger Build')
+              }
+              triggerKey = `comment:${comment.id}`
+            }
+
+            if (kind === 'review') {
+              if (!/^\d+$/.test(sourceId)) return fail('Review trigger requires a numeric trigger_source_id')
+              const { data: review } = await github.rest.pulls.getReview({ ...context.repo, pull_number: prNumber, review_id: Number(sourceId) })
+              const login = String(review.user?.login || '').toLowerCase()
+              const copilot = login === 'copilot' || login.startsWith('copilot-pull-request-reviewer')
+              const trustedHuman = review.user?.type !== 'Bot' && trustedAssociations.has(String(review.author_association || '').toUpperCase())
+              if (!copilot && !trustedHuman) return fail('Trigger review is not trusted')
+              if (String(review.user?.login || '') === process.env.BOT_LOGIN) return fail('GitKeepr bot reviews cannot trigger GitKeepr')
+              triggerKey = `review:${review.id}`
+            }
+
+            if (kind === 'manual' && sourceId) return fail('Manual trigger must not supply trigger_source_id')
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo, issue_number: prNumber, per_page: 100,
+            })
+            const handledMarker = triggerKey ? `<!-- gitkeepr-trigger:v1 key=${triggerKey} -->` : ''
+            const duplicate = Boolean(handledMarker && comments.some(c => String(c.body || '').includes(handledMarker)))
+
+            core.setOutput('head_ref', pr.head.ref)
+            core.setOutput('head_sha', pr.head.sha)
+            core.setOutput('base_ref', pr.base.ref)
+            core.setOutput('trigger_key', triggerKey)
+            core.setOutput('duplicate', duplicate ? 'true' : 'false')
+            if (duplicate) core.notice(`Trigger ${triggerKey} was already handled; skipping agent work`)
+
+      - name: Duplicate trigger already handled
+        if: steps.context.outputs.duplicate == 'true'
+        shell: bash
+        run: echo "Trigger ${{ steps.context.outputs.trigger_key }} was already handled; no agent work will run."
+
+      - name: Check out exact PR head
+        if: steps.context.outputs.duplicate != 'true'
+        uses: actions/checkout@v7
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          ref: ${{ steps.context.outputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify checked-out head and attach branch
+        if: steps.context.outputs.duplicate != 'true'
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ steps.context.outputs.head_sha }}
+          HEAD_REF: ${{ steps.context.outputs.head_ref }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git checkout -B "$HEAD_REF" "$EXPECTED_HEAD"
+
       - name: Bootstrap implementation notice
+        if: steps.context.outputs.duplicate != 'true'
         shell: bash
         run: |
-          echo "GitKeepr reusable workflow contract and repository configuration are valid."
-          echo "The tested Build/Review loop is intentionally being ported in follow-up bootstrap iterations."
-          echo "See docs/implementation-plan.md in the GitKeepr repository."
+          echo "Authoritative same-repository and trigger trust checks passed before checkout."
+          echo "The Build/Review execution body is the next bootstrap iteration."
           exit 1
