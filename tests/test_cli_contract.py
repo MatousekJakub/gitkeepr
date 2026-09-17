@@ -42,21 +42,27 @@ class CliContractTests(unittest.TestCase):
 
     def test_server_doctor_is_read_only(self):
         doctor = self.function_body("server_doctor", "server_unimplemented")
-        for forbidden in (
-            "apt-get",
+        # Diagnostics may print commands the operator should run. Protect against
+        # executable mutation statements instead of rejecting guidance text.
+        for forbidden_line in (
+            "apt-get ",
             "apt ",
-            "useradd",
-            "adduser",
-            "systemctl enable",
-            "systemctl start",
+            "useradd ",
+            "adduser ",
+            "systemctl enable ",
+            "systemctl start ",
             "gh auth login",
             "opencode auth login",
             "chmod ",
             "chown ",
-            "> $SERVER_CONFIG",
-            "> \"$SERVER_CONFIG\"",
         ):
-            self.assertNotIn(forbidden, doctor)
+            self.assertFalse(
+                any(line.lstrip().startswith(forbidden_line) for line in doctor.splitlines()),
+                f"server doctor executes mutating command: {forbidden_line}",
+            )
+        self.assertNotIn("> $SERVER_CONFIG", doctor)
+        self.assertNotIn('> "$SERVER_CONFIG"', doctor)
+        self.assertIn("run 'gh auth login'", doctor)
         self.assertIn("diagnostics made no changes", doctor)
 
     def test_server_doctor_checks_supported_platform_and_config(self):
