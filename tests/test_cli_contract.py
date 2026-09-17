@@ -85,6 +85,11 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("github-runner", doctor)
         self.assertIn("opencode", doctor)
 
+    def test_server_doctor_checks_every_runtime_used_by_core_workflow(self):
+        doctor = self.function_body("server_doctor", "server_unimplemented")
+        for command in ("curl", "git", "jq", "tar", "gh", "python3"):
+            self.assertIn(command, doctor)
+
 
 if __name__ == "__main__":
     unittest.main()
