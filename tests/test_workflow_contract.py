@@ -6,6 +6,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 CORE = (ROOT / ".github/workflows/pr-loop.yml").read_text()
 CALLER = (ROOT / "templates/gitkeepr.yml").read_text()
+SELF_GATE = (ROOT / ".github/workflows/self-gate.yml").read_text()
 
 
 class WorkflowContractTests(unittest.TestCase):
@@ -64,6 +65,25 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("github.event.comment.user.type != 'Bot'", CALLER)
         self.assertIn('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]', CALLER)
         self.assertIn("<!-- gitkeepr:no-build -->", CALLER)
+
+    def test_public_self_gate_checks_same_repo_before_candidate_dispatch(self):
+        gate_step = SELF_GATE.split("- name: Verify same-repository PR and dispatch candidate core", 1)[1]
+        same_repo_check = gate_step.index("pr.head.repo?.full_name !== expectedRepo")
+        dispatch = gate_step.index("github.rest.actions.createWorkflowDispatch")
+        self.assertLess(same_repo_check, dispatch)
+        self.assertIn("return", gate_step[same_repo_check:dispatch])
+        self.assertIn("workflow_id: 'pr-loop.yml'", gate_step[dispatch:])
+        self.assertIn("ref: pr.head.ref", gate_step[dispatch:])
+        for name in ("pr_number", "trigger_kind", "trigger_source_id"):
+            self.assertIn(f"{name}:", gate_step[dispatch:])
+
+    def test_public_self_gate_keeps_untrusted_events_off_persistent_runner(self):
+        self.assertIn("runs-on: ubuntu-latest", SELF_GATE)
+        self.assertNotIn("runs-on: [self-hosted", SELF_GATE)
+        self.assertIn("github.event.sender.type != 'Bot'", SELF_GATE)
+        self.assertIn("github.event.comment.user.type != 'Bot'", SELF_GATE)
+        self.assertIn("<!-- gitkeepr:no-build -->", SELF_GATE)
+        self.assertIn("<!-- gitkeepr-system:", SELF_GATE)
 
     def test_build_uses_configured_model_and_variant(self):
         build = CORE.split("- name: Run first Build turn", 1)[1]
