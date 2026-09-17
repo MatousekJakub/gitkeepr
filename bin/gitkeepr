@@ -132,17 +132,63 @@ project_init() {
 project_doctor() {
   require_cmd git
   require_cmd gh
-  local ok=0 repo
+  local failed=0 repo="" visibility="" name value
   if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
     say "FAIL  Git repository not detected"
     return 1
   fi
   say "OK    Git repository detected"
-  if gh auth status >/dev/null 2>&1; then say "OK    gh authenticated"; else say "FAIL  gh not authenticated"; ok=1; fi
+  if gh auth status >/dev/null 2>&1; then say "OK    gh authenticated"; else say "FAIL  gh not authenticated"; failed=1; fi
+
   repo="$(repo_name 2>/dev/null || true)"
-  if [[ -n "$repo" ]]; then say "OK    GitHub repository: $repo"; else say "FAIL  GitHub repository unresolved"; ok=1; fi
-  if [[ -f "$WORKFLOW_PATH" ]]; then say "OK    $WORKFLOW_PATH exists"; else say "FAIL  $WORKFLOW_PATH missing"; ok=1; fi
-  return "$ok"
+  if [[ -n "$repo" ]]; then
+    say "OK    GitHub repository: $repo"
+  else
+    say "FAIL  GitHub repository unresolved"
+    failed=1
+  fi
+
+  if [[ -n "$repo" ]]; then
+    visibility="$(repo_visibility 2>/dev/null || true)"
+    if [[ -z "$visibility" ]]; then
+      say "FAIL  Repository visibility could not be determined"
+      failed=1
+    elif [[ "${visibility,,}" == "public" ]]; then
+      say "FAIL  Public repository is outside the standard V1 persistent-runner setup"
+      failed=1
+    else
+      say "OK    Repository visibility is ${visibility,,}"
+    fi
+
+    for name in GITKEEPR_BUILD_MODEL GITKEEPR_BUILD_VARIANT GITKEEPR_REVIEW_MODEL GITKEEPR_REVIEW_VARIANT GITKEEPR_MAX_CYCLES; do
+      value="$(current_var "$repo" "$name")"
+      if [[ -n "$value" ]]; then
+        say "OK    Repository variable $name is configured"
+      else
+        say "FAIL  Repository variable $name is missing or empty; run 'gitkeepr init'"
+        failed=1
+      fi
+    done
+    value="$(current_var "$repo" GITKEEPR_MAX_CYCLES)"
+    if [[ -n "$value" && ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+      say "FAIL  GITKEEPR_MAX_CYCLES must be a positive integer"
+      failed=1
+    fi
+  fi
+
+  if [[ -f "$WORKFLOW_PATH" ]]; then
+    say "OK    $WORKFLOW_PATH exists"
+  else
+    say "FAIL  $WORKFLOW_PATH missing; run 'gitkeepr init'"
+    failed=1
+  fi
+
+  if [[ "$failed" -eq 0 ]]; then
+    say "PASS  Repository-side GitKeepr setup looks healthy."
+  else
+    say "FAIL  Repository has one or more setup problems; diagnostics made no changes."
+  fi
+  return "$failed"
 }
 
 server_doctor() {
