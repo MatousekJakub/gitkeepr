@@ -40,6 +40,16 @@ class CliContractTests(unittest.TestCase):
         for forbidden in (".ai/plan.md", "AGENTS.md", ".gitkeepr/"):
             self.assertNotIn(forbidden, init)
 
+    def test_project_doctor_detects_stale_caller_without_replacing_it(self):
+        doctor = self.function_body("project_doctor", "server_doctor")
+        self.assertIn('curl -fsSL "$RAW_BASE/templates/gitkeepr.yml" -o "$tmp"', doctor)
+        self.assertIn('cmp -s "$tmp" "$WORKFLOW_PATH"', doctor)
+        self.assertIn("differs from the current GitKeepr template", doctor)
+        self.assertIn("run 'gitkeepr init' to review replacement", doctor)
+        self.assertNotIn('cp "$tmp" "$WORKFLOW_PATH"', doctor)
+        self.assertNotIn('rm "$WORKFLOW_PATH"', doctor)
+        self.assertIn("diagnostics made no persistent changes", doctor)
+
     def test_server_doctor_is_read_only(self):
         doctor = self.function_body("server_doctor", "server_unimplemented")
         # Diagnostics may print commands the operator should run. Protect against
