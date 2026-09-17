@@ -4,6 +4,7 @@ set -euo pipefail
 VERSION="0.1.0-bootstrap"
 RAW_BASE="${GITKEEPR_RAW_BASE:-https://raw.githubusercontent.com/MatousekJakub/gitkeepr/main}"
 WORKFLOW_PATH=".github/workflows/gitkeepr.yml"
+SERVER_CONFIG="/etc/gitkeepr/config"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -23,8 +24,9 @@ Usage:
   gitkeepr version
 
 Bootstrap status:
-  Project init is implemented first. Server/runner lifecycle commands are
-  intentionally introduced incrementally; unfinished commands fail clearly.
+  Project init and read-only diagnostics are implemented first. Server setup and
+  runner lifecycle commands are introduced incrementally; unfinished commands
+  fail clearly.
 USAGE
 }
 
@@ -143,6 +145,92 @@ project_doctor() {
   return "$ok"
 }
 
+server_doctor() {
+  local failed=0 os_id="" os_like="" arch config_client="" config_key=""
+
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    os_id="${ID:-}"
+    os_like="${ID_LIKE:-}"
+  fi
+  if [[ "$os_id" == "ubuntu" || "$os_id" == "debian" || " $os_like " == *" debian "* ]]; then
+    say "OK    Supported Debian-family OS${PRETTY_NAME:+: $PRETTY_NAME}"
+  else
+    say "FAIL  Unsupported OS; GitKeepr V1 server commands support Ubuntu/Debian"
+    failed=1
+  fi
+
+  if [[ -d /run/systemd/system ]] && command -v systemctl >/dev/null 2>&1; then
+    say "OK    systemd detected"
+  else
+    say "FAIL  systemd is required"
+    failed=1
+  fi
+
+  arch="$(uname -m 2>/dev/null || true)"
+  case "$arch" in
+    x86_64|amd64|aarch64|arm64) say "OK    Supported architecture: $arch" ;;
+    *) say "FAIL  Unsupported architecture: ${arch:-unknown} (expected amd64 or arm64)"; failed=1 ;;
+  esac
+
+  local cmd
+  for cmd in curl git jq tar gh; do
+    if command -v "$cmd" >/dev/null 2>&1; then
+      say "OK    $cmd available"
+    else
+      say "FAIL  $cmd missing; run 'gitkeepr server init' once server setup is available"
+      failed=1
+    fi
+  done
+
+  if gh auth status >/dev/null 2>&1; then
+    say "OK    admin gh authenticated"
+  else
+    say "FAIL  admin gh is not authenticated; run 'gh auth login'"
+    failed=1
+  fi
+
+  if id github-runner >/dev/null 2>&1; then
+    say "OK    github-runner user exists"
+    if sudo -n -u github-runner sh -c 'command -v opencode >/dev/null 2>&1' 2>/dev/null; then
+      say "OK    OpenCode available to github-runner"
+    elif [[ "$(id -u)" -eq 0 ]] && runuser -u github-runner -- sh -c 'command -v opencode >/dev/null 2>&1' 2>/dev/null; then
+      say "OK    OpenCode available to github-runner"
+    else
+      say "FAIL  OpenCode is not available to github-runner"
+      failed=1
+    fi
+  else
+    say "FAIL  github-runner user missing"
+    failed=1
+  fi
+
+  if [[ -r "$SERVER_CONFIG" ]]; then
+    while IFS='=' read -r key value; do
+      case "$key" in
+        GITKEEPR_APP_CLIENT_ID) config_client="$value" ;;
+        GITKEEPR_APP_PRIVATE_KEY_PATH) config_key="$value" ;;
+      esac
+    done < "$SERVER_CONFIG"
+    if [[ -n "$config_client" ]]; then say "OK    App Client ID configured"; else say "FAIL  GITKEEPR_APP_CLIENT_ID missing in $SERVER_CONFIG"; failed=1; fi
+    if [[ -n "$config_key" && -r "$config_key" ]]; then say "OK    App private key path is readable"; else say "FAIL  App private key path missing or unreadable"; failed=1; fi
+    local mode
+    mode="$(stat -c '%a' "$SERVER_CONFIG" 2>/dev/null || true)"
+    if [[ "$mode" == "600" || "$mode" == "400" ]]; then say "OK    $SERVER_CONFIG permissions are restrictive ($mode)"; else say "WARN  $SERVER_CONFIG permissions are ${mode:-unknown}; prefer 600"; fi
+  else
+    say "FAIL  $SERVER_CONFIG is missing or unreadable"
+    failed=1
+  fi
+
+  if [[ "$failed" -eq 0 ]]; then
+    say "PASS  Server prerequisites look healthy."
+  else
+    say "FAIL  Server has one or more prerequisite problems; diagnostics made no changes."
+  fi
+  return "$failed"
+}
+
 server_unimplemented() {
   die "This server/runner command is not implemented in the first light bootstrap iteration yet. See docs/implementation-plan.md."
 }
@@ -153,7 +241,8 @@ case "${1:-}" in
   server)
     shift
     case "${1:-}" in
-      init|doctor) server_unimplemented ;;
+      init) shift; [[ $# -eq 0 ]] || die "Unexpected arguments to server init."; server_unimplemented ;;
+      doctor) shift; [[ $# -eq 0 ]] || die "Unexpected arguments to server doctor."; server_doctor ;;
       *) usage; exit 2 ;;
     esac
     ;;
