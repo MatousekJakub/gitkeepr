@@ -16,6 +16,26 @@ class WorkflowContractTests(unittest.TestCase):
         for forbidden in ("build_model:", "review_model:", "max_cycles:"):
             self.assertNotIn(forbidden, call_block)
 
+    def test_direct_dispatch_and_reusable_call_share_app_credentials_safely(self):
+        call_block = CORE.split("workflow_call:", 1)[1].split("workflow_dispatch:", 1)[0]
+        self.assertIn("app_private_key: { required: true }", call_block)
+
+        fallback = "${{ secrets.app_private_key || secrets.GITKEEPR_APP_PRIVATE_KEY }}"
+        self.assertEqual(CORE.count(fallback), 2)
+
+        validation = CORE.split("- name: Validate repository configuration", 1)[1].split(
+            "- name: Add OpenCode to PATH", 1
+        )[0]
+        token = CORE.split("- name: Create GitKeepr App token", 1)[1].split(
+            "- name: Resolve GitKeepr bot identity", 1
+        )[0]
+        self.assertIn(f"APP_PRIVATE_KEY: {fallback}", validation)
+        self.assertIn(f"private-key: {fallback}", token)
+
+        # The normal target caller should continue to pass the repository secret
+        # through the reusable workflow's deliberately small secret alias.
+        self.assertIn("app_private_key: ${{ secrets.GITKEEPR_APP_PRIVATE_KEY }}", CALLER)
+
     def test_authorization_happens_before_checkout(self):
         authorize = CORE.index("- name: Resolve and authorize trigger")
         checkout = CORE.index("- name: Check out exact PR head")
