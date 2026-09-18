@@ -159,7 +159,10 @@ jobs:
               if (!body && !inline.length) parts.push('', '(Review contains no body or inline comments.)')
               triggerFeedback = parts.join('\n')
             }
-            if (kind === 'manual' && sourceId) return fail('Manual trigger must not supply trigger_source_id')
+            if (kind === 'manual') {
+              if (sourceId) return fail('Manual trigger must not supply trigger_source_id')
+              triggerKey = `manual:${context.runId}`
+            }
             const handledMarker = triggerKey ? `<!-- gitkeepr-trigger:v1 key=${triggerKey} -->` : ''
             const duplicate = Boolean(handledMarker && comments.some(c => String(c.body || '').includes(handledMarker)))
             core.setOutput('head_ref', pr.head.ref); core.setOutput('head_sha', pr.head.sha); core.setOutput('base_ref', pr.base.ref)
