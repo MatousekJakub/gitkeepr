@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused static contract tests for GitKeepr workflow security invariants."""
+"""Focused static contract tests for GitKeepr workflow security and loop invariants."""
 from pathlib import Path
 import unittest
 
@@ -32,9 +32,6 @@ class WorkflowContractTests(unittest.TestCase):
         )[0]
         self.assertIn(f"APP_PRIVATE_KEY: {fallback}", validation)
         self.assertIn(f"private-key: {fallback}", token)
-
-        # The normal target caller should continue to pass the repository secret
-        # through the reusable workflow's deliberately small secret alias.
         self.assertIn("app_private_key: ${{ secrets.GITKEEPR_APP_PRIVATE_KEY }}", CALLER)
 
     def test_authorization_happens_before_checkout(self):
@@ -50,11 +47,7 @@ class WorkflowContractTests(unittest.TestCase):
         checkout = CORE.split("- name: Check out exact PR head", 1)[1]
         self.assertIn("ref: ${{ steps.context.outputs.head_sha }}", checkout)
         self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"', checkout)
-
-    def test_success_marker_is_not_yet_written_by_bootstrap_stub(self):
-        # Until the real loop exists, an incomplete/failed run must never consume a trigger.
-        after_context = CORE.split("- name: Duplicate trigger already handled", 1)[1]
-        self.assertNotIn("gitkeepr-trigger:v1 key=", after_context)
+        self.assertIn('git fetch --no-tags origin "$BASE_REF"', checkout)
 
     def test_manual_trigger_uses_workflow_run_as_idempotence_key(self):
         authorize = CORE.split("- name: Resolve and authorize trigger", 1)[1].split(
@@ -63,7 +56,10 @@ class WorkflowContractTests(unittest.TestCase):
         manual = authorize.split("if (kind === 'manual')", 1)[1].split(
             "const handledMarker", 1
         )[0]
-        self.assertIn("if (sourceId) return fail('Manual trigger must not supply trigger_source_id')", manual)
+        self.assertIn(
+            "if (sourceId) return fail('Manual trigger must not supply trigger_source_id')",
+            manual,
+        )
         self.assertIn("triggerKey = `manual:${context.runId}`", manual)
 
     def test_caller_rejects_forks_and_bot_sync_without_hardcoded_identity(self):
@@ -77,7 +73,9 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("<!-- gitkeepr:no-build -->", CALLER)
 
     def test_public_self_gate_checks_same_repo_before_candidate_dispatch(self):
-        gate_step = SELF_GATE.split("- name: Verify same-repository PR and dispatch candidate core", 1)[1]
+        gate_step = SELF_GATE.split(
+            "- name: Verify same-repository PR and dispatch candidate core", 1
+        )[1]
         same_repo_check = gate_step.index("pr.head.repo?.full_name !== expectedRepo")
         dispatch = gate_step.index("github.rest.actions.createWorkflowDispatch")
         self.assertLess(same_repo_check, dispatch)
@@ -95,16 +93,74 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("<!-- gitkeepr:no-build -->", SELF_GATE)
         self.assertIn("<!-- gitkeepr-system:", SELF_GATE)
 
-    def test_build_uses_configured_model_and_variant(self):
-        build = CORE.split("- name: Run first Build turn", 1)[1]
-        self.assertIn('--model "$GITKEEPR_BUILD_MODEL"', build)
-        self.assertIn('--variant "$GITKEEPR_BUILD_VARIANT"', build)
+    def test_complete_loop_uses_configured_models_and_variants(self):
+        loop = CORE.split("- name: Run Build Review loop", 1)[1]
+        self.assertIn('--model "$GITKEEPR_BUILD_MODEL"', loop)
+        self.assertIn('--variant "$GITKEEPR_BUILD_VARIANT"', loop)
+        self.assertIn('--model "$GITKEEPR_REVIEW_MODEL"', loop)
+        self.assertIn('--variant "$GITKEEPR_REVIEW_VARIANT"', loop)
+        self.assertIn('for cycle in $(seq 1 "$GITKEEPR_MAX_CYCLES")', loop)
 
     def test_build_does_not_own_git_operations(self):
-        build = CORE.split("- name: Run first Build turn", 1)[1]
-        self.assertIn("Do not commit, push, create branches, or modify GitHub metadata", build)
-        self.assertIn('git commit -m "gitkeepr: build"', build)
-        self.assertIn('git push origin "HEAD:${HEAD_REF}"', build)
+        loop = CORE.split("- name: Run Build Review loop", 1)[1]
+        self.assertIn(
+            "Do not commit, push, create branches, or modify GitHub metadata",
+            loop,
+        )
+        self.assertIn('git commit -m "gitkeepr: build cycle ${cycle}"', loop)
+        self.assertIn('git push origin "HEAD:${HEAD_REF}"', loop)
+
+    def test_review_is_read_only_and_verdict_is_bound_to_current_head(self):
+        loop = CORE.split("- name: Run Build Review loop", 1)[1]
+        self.assertIn("Do not edit repository files.", loop)
+        self.assertIn("gitkeepr-system-review:v1 head=${current_head} verdict=continue", loop)
+        self.assertIn("gitkeepr-system-review:v1 head=${current_head} verdict=pass", loop)
+        self.assertIn('git diff --exit-code || block "Review agent modified tracked repository files', loop)
+        self.assertIn("review.count(\"<!-- gitkeepr-system-review:v1\") != 1", loop)
+
+    def test_no_progress_and_cycle_exhaustion_block(self):
+        loop = CORE.split("- name: Run Build Review loop", 1)[1]
+        self.assertIn(
+            'if [[ "$changed" == "false" || "$current_head" == "$start_head" ]]',
+            loop,
+        )
+        self.assertIn("stopping to avoid an infinite loop", loop)
+        self.assertIn("exhausted GITKEEPR_MAX_CYCLES", loop)
+        self.assertIn('set_gitkeepr_status "gitkeepr:building"', loop)
+        self.assertIn('set_gitkeepr_status "gitkeepr:reviewing"', loop)
+
+    def test_core_does_not_impose_a_generic_deterministic_test_command(self):
+        self.assertNotIn("python3 -m unittest discover -s tests -v", CORE)
+        self.assertIn("Run the relevant tests for the repository and task.", CORE)
+
+    def test_successful_handling_writes_processed_marker_only_in_success_path(self):
+        publish = CORE.split("- name: Publish result and finalize status", 1)[1]
+        self.assertIn("const succeeded = process.env.LOOP_OUTCOME === 'success'", publish)
+        self.assertIn("<!-- gitkeepr-trigger:v1 key=${triggerKey} -->", publish)
+        success_block = publish.split("if (succeeded) {", 1)[1].split(
+            "for (const file of reviewFiles)", 1
+        )[0]
+        self.assertIn("triggerMarker", success_block)
+        failure_block = publish.split("for (const file of reviewFiles)", 1)[1]
+        self.assertNotIn("triggerMarker", failure_block.split("let message =", 1)[0])
+        self.assertIn("gitkeepr-system-blocked:v1", failure_block)
+
+    def test_direct_comment_reply_can_finish_without_review(self):
+        loop = CORE.split("- name: Run Build Review loop", 1)[1]
+        self.assertIn(
+            'if [[ "$changed" == "false" && "$TRIGGER_KIND" == "comment" && "$cycle" -eq 1 ]]',
+            loop,
+        )
+        self.assertIn('cp "$build_text_file" "$DIRECT_REPLY_FILE"', loop)
+        publish = CORE.split("- name: Publish result and finalize status", 1)[1]
+        self.assertIn("gitkeepr-system-reply:v1", publish)
+
+    def test_final_status_is_waiting_human_or_blocked(self):
+        publish = CORE.split("- name: Publish result and finalize status", 1)[1]
+        self.assertIn(
+            "const target = succeeded ? 'gitkeepr:waiting-human' : 'gitkeepr:blocked'",
+            publish,
+        )
 
 
 if __name__ == "__main__":
