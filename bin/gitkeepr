@@ -51,6 +51,9 @@ require_admin() {
     return 0
   fi
   require_cmd sudo
+  if sudo -n true 2>/dev/null; then
+    return 0
+  fi
   sudo -v
 }
 
@@ -116,7 +119,7 @@ load_server_config() {
   APP_CLIENT_ID=""
   APP_KEY_PATH=""
 
-  [[ -e "$SERVER_CONFIG" ]] || die "$SERVER_CONFIG is missing. Run 'gitkeepr server init' first."
+  as_root test -e "$SERVER_CONFIG" || die "$SERVER_CONFIG is missing. Run 'gitkeepr server init' first."
   contents="$(read_protected_file "$SERVER_CONFIG" 2>/dev/null || true)"
   [[ -n "$contents" ]] || die "$SERVER_CONFIG is unreadable or empty."
 
@@ -708,7 +711,7 @@ server_init() {
     say "Cached Actions runner package at $cache_path"
   fi
 
-  if [[ -e "$SERVER_CONFIG" ]]; then
+  if as_root test -e "$SERVER_CONFIG"; then
     existing_config="$(read_protected_file "$SERVER_CONFIG" 2>/dev/null || true)"
     while IFS='=' read -r key value; do
       case "$key" in

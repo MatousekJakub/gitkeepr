@@ -93,6 +93,21 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("Runner filesystem free space", doctor)
         self.assertIn("actions.runner.*", doctor)
 
+    def test_admin_check_prefers_passwordless_sudo_before_interactive_validation(self):
+        admin = self.function_body("require_admin", "as_root")
+        self.assertIn("sudo -n true", admin)
+        self.assertIn("sudo -v", admin)
+        self.assertLess(admin.index("sudo -n true"), admin.index("sudo -v"))
+
+    def test_protected_server_config_existence_checks_run_as_root(self):
+        load = self.function_body("load_server_config", "base64url")
+        self.assertIn('as_root test -e "$SERVER_CONFIG"', load)
+        self.assertNotIn('[[ -e "$SERVER_CONFIG" ]]', load)
+
+        init = self.function_body("server_init", "runner_add")
+        self.assertIn('if as_root test -e "$SERVER_CONFIG"; then', init)
+        self.assertNotIn('if [[ -e "$SERVER_CONFIG" ]]; then', init)
+
     def test_server_init_bootstraps_host_without_touching_existing_runners(self):
         init = self.function_body("server_init", "runner_add")
         self.assertIn("apt-get install -y", init)
