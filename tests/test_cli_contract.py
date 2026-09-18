@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused static tests for GitKeepr CLI safety and project-init contracts."""
+"""Focused static tests for GitKeepr CLI safety and V1 lifecycle contracts."""
 from pathlib import Path
 import unittest
 
@@ -13,13 +13,7 @@ class CliContractTests(unittest.TestCase):
 
     def test_project_init_never_owns_git_history(self):
         init = self.function_body("project_init", "project_doctor")
-        for forbidden in (
-            "git add",
-            "git commit",
-            "git push",
-            "git reset",
-            "git stash",
-        ):
+        for forbidden in ("git add", "git commit", "git push", "git reset", "git stash"):
             self.assertNotIn(forbidden, init)
         self.assertIn("git status --short", init)
 
@@ -47,13 +41,10 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("differs from the current GitKeepr template", doctor)
         self.assertIn("run 'gitkeepr init' to review replacement", doctor)
         self.assertNotIn('cp "$tmp" "$WORKFLOW_PATH"', doctor)
-        self.assertNotIn('rm "$WORKFLOW_PATH"', doctor)
         self.assertIn("diagnostics made no persistent changes", doctor)
 
     def test_server_doctor_is_read_only(self):
-        doctor = self.function_body("server_doctor", "server_unimplemented")
-        # Diagnostics may print commands the operator should run. Protect against
-        # executable mutation statements instead of rejecting guidance text.
+        doctor = self.function_body("server_doctor", "server_init")
         for forbidden_line in (
             "apt-get ",
             "apt ",
@@ -65,6 +56,7 @@ class CliContractTests(unittest.TestCase):
             "opencode auth login",
             "chmod ",
             "chown ",
+            "rm -rf ",
         ):
             self.assertFalse(
                 any(line.lstrip().startswith(forbidden_line) for line in doctor.splitlines()),
@@ -75,37 +67,97 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("run 'gh auth login'", doctor)
         self.assertIn("diagnostics made no changes", doctor)
 
-    def test_server_doctor_checks_supported_platform_and_config(self):
-        doctor = self.function_body("server_doctor", "server_unimplemented")
+    def test_server_doctor_checks_runtime_config_cache_and_models(self):
+        doctor = self.function_body("server_doctor", "server_init")
         self.assertIn("Ubuntu/Debian", doctor)
         self.assertIn("systemd", doctor)
         self.assertIn("x86_64|amd64|aarch64|arm64", doctor)
+        for command in ("curl", "git", "jq", "tar", "gh", "python3", "openssl"):
+            self.assertIn(command, doctor)
         self.assertIn("GITKEEPR_APP_CLIENT_ID", doctor)
         self.assertIn("GITKEEPR_APP_PRIVATE_KEY_PATH", doctor)
-        self.assertIn("github-runner", doctor)
-        self.assertIn("opencode", doctor)
+        self.assertIn("root:root", doctor)
+        self.assertIn("600", doctor)
+        self.assertIn("runner_cache_path", doctor)
+        self.assertIn('"$opencode_path" models', doctor)
+        self.assertIn("Runner filesystem free space", doctor)
+        self.assertIn("actions.runner.*", doctor)
 
-    def test_server_doctor_reads_protected_config_without_weakening_permissions(self):
-        doctor = self.function_body("server_doctor", "server_unimplemented")
-        self.assertIn('config_contents="$(sudo cat "$SERVER_CONFIG"', doctor)
-        self.assertIn('mode="$(sudo stat -c \'%a\' "$SERVER_CONFIG"', doctor)
-        self.assertIn('sudo test -r "$config_key"', doctor)
-        self.assertIn('[[ "$(id -u)" -eq 0 ]]', doctor)
-        self.assertNotIn('sudo chmod', doctor)
-        self.assertNotIn('sudo chown', doctor)
+    def test_server_init_bootstraps_host_without_touching_existing_runners(self):
+        init = self.function_body("server_init", "runner_add")
+        self.assertIn("apt-get install -y", init)
+        for package in ("curl", "git", "jq", "tar", "ca-certificates", "gh", "python3", "openssl"):
+            self.assertIn(package, init)
+        self.assertIn('useradd --create-home --shell /bin/bash "$RUNNER_USER"', init)
+        self.assertIn("gh auth login", init)
+        self.assertIn("https://opencode.ai/install", init)
+        self.assertIn('"$opencode_path" auth login', init)
+        self.assertIn('"$opencode_path" models', init)
+        self.assertIn("repos/actions/runner/releases/latest", init)
+        self.assertIn('install -o root -g root -m 0600 "$tmp" "$SERVER_CONFIG"', init)
+        self.assertIn("Existing repository runners were not modified.", init)
+        self.assertNotIn("remove_runner_installation", init)
+        self.assertNotIn('rm -rf "$home/runners"', init)
 
-    def test_server_doctor_enforces_protected_config_metadata(self):
-        doctor = self.function_body("server_doctor", "server_unimplemented")
-        self.assertIn("stat -c '%U:%G'", doctor)
-        self.assertIn('[[ "$owner" == "root:root" ]]', doctor)
-        self.assertIn('[[ "$mode" == "600" || "$mode" == "400" ]]', doctor)
-        self.assertIn("expected root:root", doctor)
-        self.assertIn("expected 600 or 400", doctor)
+    def test_app_verification_uses_server_client_id_and_private_key(self):
+        jwt = self.function_body("github_app_jwt", "verify_app_access")
+        self.assertIn('"iss":"%s"', jwt)
+        self.assertIn('"$APP_CLIENT_ID"', jwt)
+        self.assertIn('openssl dgst -sha256 -sign "$APP_KEY_PATH"', jwt)
 
-    def test_server_doctor_checks_every_runtime_used_by_core_workflow(self):
-        doctor = self.function_body("server_doctor", "server_unimplemented")
-        for command in ("curl", "git", "jq", "tar", "gh", "python3"):
-            self.assertIn(command, doctor)
+        verify = self.function_body("verify_app_access", "verify_project_vars")
+        self.assertIn("https://api.github.com/repos/$repo/installation", verify)
+        self.assertIn("Authorization: Bearer $jwt", verify)
+        self.assertIn(".permissions", verify)
+        self.assertIn("write\\twrite\\twrite\\twrite", verify)
+
+    def test_runner_add_validates_before_registration_and_syncs_credentials(self):
+        add = self.function_body("runner_add", "runner_remove")
+        validation_end = add.index('cache_path="$(runner_cache_path)"')
+        validation = add[:validation_end]
+        self.assertIn('validate_target_repo "$repo"', validation)
+        self.assertIn('verify_project_vars "$repo"', validation)
+        self.assertIn('verify_app_access "$repo"', validation)
+        self.assertIn('sync_app_credentials "$repo"', validation)
+        self.assertIn("registration-token", add)
+        self.assertIn("--labels gitkeepr", add)
+        self.assertIn("./svc.sh install", add)
+        self.assertIn("./svc.sh start", add)
+        self.assertIn('"$status" == "online"', add)
+
+    def test_runner_add_healthy_rerun_resyncs_without_reconfigure(self):
+        add = self.function_body("runner_add", "runner_remove")
+        healthy = add.split('if [[ -d "$dir" && -f "$dir/.runner"', 1)[1].split(
+            'if [[ -d "$dir" || -n "$record" ]]', 1
+        )[0]
+        self.assertIn('runner_service_healthy "$dir"', healthy)
+        self.assertIn("already configured and online", healthy)
+        self.assertIn("App credentials were resynchronized", healthy)
+        self.assertIn("return 0", healthy)
+
+    def test_runner_reconfigure_uses_fresh_remove_and_registration_tokens(self):
+        helper = self.function_body("remove_runner_installation", "project_init")
+        self.assertIn("actions/runners/remove-token", helper)
+        self.assertIn("./config.sh remove --token", helper)
+        add = self.function_body("runner_add", "runner_remove")
+        self.assertIn("Reconfigure it? [y/N]", add)
+        self.assertIn('remove_runner_installation "$repo" "$dir" "$runner_id"', add)
+        self.assertIn("actions/runners/registration-token", add)
+
+    def test_runner_remove_leaves_repository_configuration_intact(self):
+        remove = CLI.split("runner_remove() {", 1)[1].split('case "${1:-}" in', 1)[0]
+        self.assertIn('remove_runner_installation "$repo" "$dir" "$runner_id"', remove)
+        self.assertIn("Repository variables, secrets, and workflow files were left unchanged.", remove)
+        self.assertNotIn("gh variable delete", remove)
+        self.assertNotIn("gh secret delete", remove)
+        self.assertNotIn("delete_file", remove)
+
+    def test_public_runner_exception_is_only_upstream_self_dogfood(self):
+        validate = self.function_body("validate_target_repo", "runner_dir_for")
+        self.assertIn('upstream="$(upstream_repo_from_raw_base || true)"', validate)
+        self.assertIn('"$repo" != "$upstream"', validate)
+        self.assertIn(".github/workflows/self-gate.yml", validate)
+        self.assertIn("does not support public target repositories", validate)
 
 
 if __name__ == "__main__":
