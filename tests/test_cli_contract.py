@@ -136,6 +136,11 @@ class CliContractTests(unittest.TestCase):
         self.assertIn(".permissions", verify)
         self.assertIn("write\\twrite\\twrite\\twrite", verify)
 
+    def test_runner_name_does_not_turn_hostname_newline_into_separator(self):
+        helper = self.function_body("runner_name_for", "runner_record")
+        self.assertIn('printf \'%s\' "$(hostname -s)"', helper)
+        self.assertNotIn("hostname -s | tr -c", helper)
+
     def test_runner_add_validates_before_registration_and_syncs_credentials(self):
         add = self.function_body("runner_add", "runner_remove")
         validation_end = add.index('cache_path="$(runner_cache_path)"')

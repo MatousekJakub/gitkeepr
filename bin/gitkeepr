@@ -222,7 +222,7 @@ runner_dir_for() {
 
 runner_name_for() {
   local repo="$1" host repo_part
-  host="$(hostname -s | tr -c 'A-Za-z0-9._-' '-')"
+  host="$(printf '%s' "$(hostname -s)" | tr -c 'A-Za-z0-9._-' '-')"
   repo_part="${repo#*/}"
   repo_part="$(printf '%s' "$repo_part" | tr -c 'A-Za-z0-9._-' '-')"
   printf '%s-%s' "$host" "$repo_part"
