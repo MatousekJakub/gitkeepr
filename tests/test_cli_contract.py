@@ -85,6 +85,15 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("github-runner", doctor)
         self.assertIn("opencode", doctor)
 
+    def test_server_doctor_reads_protected_config_without_weakening_permissions(self):
+        doctor = self.function_body("server_doctor", "server_unimplemented")
+        self.assertIn('config_contents="$(sudo cat "$SERVER_CONFIG"', doctor)
+        self.assertIn('mode="$(sudo stat -c \'%a\' "$SERVER_CONFIG"', doctor)
+        self.assertIn('sudo test -r "$config_key"', doctor)
+        self.assertIn('[[ "$(id -u)" -eq 0 ]]', doctor)
+        self.assertNotIn('sudo chmod', doctor)
+        self.assertNotIn('sudo chown', doctor)
+
     def test_server_doctor_checks_every_runtime_used_by_core_workflow(self):
         doctor = self.function_body("server_doctor", "server_unimplemented")
         for command in ("curl", "git", "jq", "tar", "gh", "python3"):
