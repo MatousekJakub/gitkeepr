@@ -256,9 +256,9 @@ server_doctor() {
 
   if id github-runner >/dev/null 2>&1; then
     say "OK    github-runner user exists"
-    if sudo -n -u github-runner sh -c 'command -v opencode >/dev/null 2>&1' 2>/dev/null; then
+    if [[ "$(id -u)" -eq 0 ]] && runuser -u github-runner -- sh -c 'command -v opencode >/dev/null 2>&1' 2>/dev/null; then
       say "OK    OpenCode available to github-runner"
-    elif [[ "$(id -u)" -eq 0 ]] && runuser -u github-runner -- sh -c 'command -v opencode >/dev/null 2>&1' 2>/dev/null; then
+    elif [[ "$(id -u)" -ne 0 ]] && sudo -u github-runner sh -c 'command -v opencode >/dev/null 2>&1'; then
       say "OK    OpenCode available to github-runner"
     else
       say "FAIL  OpenCode is not available to github-runner"
