@@ -43,6 +43,16 @@ class CliContractTests(unittest.TestCase):
         self.assertNotIn('cp "$tmp" "$WORKFLOW_PATH"', doctor)
         self.assertIn("diagnostics made no persistent changes", doctor)
 
+    def test_project_doctor_checks_server_synced_credentials_and_runner_health(self):
+        doctor = self.function_body("project_doctor", "server_doctor")
+        self.assertIn("GITKEEPR_APP_CLIENT_ID", doctor)
+        self.assertIn("gh secret list", doctor)
+        self.assertIn("GITKEEPR_APP_PRIVATE_KEY", doctor)
+        self.assertIn("actions/runners?per_page=100", doctor)
+        self.assertIn('== "gitkeepr"', doctor)
+        self.assertIn("registered and online", doctor)
+        self.assertIn("project doctor does not have the private key", doctor)
+
     def test_server_doctor_is_read_only(self):
         doctor = self.function_body("server_doctor", "server_init")
         for forbidden_line in (
