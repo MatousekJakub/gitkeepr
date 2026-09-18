@@ -56,6 +56,16 @@ class WorkflowContractTests(unittest.TestCase):
         after_context = CORE.split("- name: Duplicate trigger already handled", 1)[1]
         self.assertNotIn("gitkeepr-trigger:v1 key=", after_context)
 
+    def test_manual_trigger_uses_workflow_run_as_idempotence_key(self):
+        authorize = CORE.split("- name: Resolve and authorize trigger", 1)[1].split(
+            "- name: Duplicate trigger already handled", 1
+        )[0]
+        manual = authorize.split("if (kind === 'manual')", 1)[1].split(
+            "const handledMarker", 1
+        )[0]
+        self.assertIn("if (sourceId) return fail('Manual trigger must not supply trigger_source_id')", manual)
+        self.assertIn("triggerKey = `manual:${context.runId}`", manual)
+
     def test_caller_rejects_forks_and_bot_sync_without_hardcoded_identity(self):
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", CALLER)
         self.assertIn("github.event.sender.type != 'Bot'", CALLER)
