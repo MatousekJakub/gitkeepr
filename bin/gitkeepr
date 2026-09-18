@@ -209,7 +209,7 @@ project_doctor() {
 }
 
 server_doctor() {
-  local failed=0 os_id="" os_like="" arch config_client="" config_key="" config_contents="" mode=""
+  local failed=0 os_id="" os_like="" arch config_client="" config_key="" config_contents="" mode="" owner=""
 
   if [[ -r /etc/os-release ]]; then
     # shellcheck disable=SC1091
@@ -272,9 +272,11 @@ server_doctor() {
   if [[ "$(id -u)" -eq 0 ]]; then
     config_contents="$(cat "$SERVER_CONFIG" 2>/dev/null || true)"
     mode="$(stat -c '%a' "$SERVER_CONFIG" 2>/dev/null || true)"
+    owner="$(stat -c '%U:%G' "$SERVER_CONFIG" 2>/dev/null || true)"
   else
     config_contents="$(sudo cat "$SERVER_CONFIG" 2>/dev/null || true)"
     mode="$(sudo stat -c '%a' "$SERVER_CONFIG" 2>/dev/null || true)"
+    owner="$(sudo stat -c '%U:%G' "$SERVER_CONFIG" 2>/dev/null || true)"
   fi
 
   if [[ -n "$config_contents" ]]; then
@@ -298,6 +300,7 @@ server_doctor() {
       say "FAIL  App private key path missing or unreadable"
       failed=1
     fi
+    if [[ "$owner" == "root:root" ]]; then say "OK    $SERVER_CONFIG is root-owned"; else say "FAIL  $SERVER_CONFIG owner is ${owner:-unknown}; expected root:root"; failed=1; fi
     if [[ "$mode" == "600" || "$mode" == "400" ]]; then say "OK    $SERVER_CONFIG permissions are restrictive ($mode)"; else say "WARN  $SERVER_CONFIG permissions are ${mode:-unknown}; prefer 600"; fi
   else
     say "FAIL  $SERVER_CONFIG is missing, unreadable, or empty"
