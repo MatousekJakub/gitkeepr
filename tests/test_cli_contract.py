@@ -94,6 +94,14 @@ class CliContractTests(unittest.TestCase):
         self.assertNotIn('sudo chmod', doctor)
         self.assertNotIn('sudo chown', doctor)
 
+    def test_server_doctor_enforces_protected_config_metadata(self):
+        doctor = self.function_body("server_doctor", "server_unimplemented")
+        self.assertIn("stat -c '%U:%G'", doctor)
+        self.assertIn('[[ "$owner" == "root:root" ]]', doctor)
+        self.assertIn('[[ "$mode" == "600" || "$mode" == "400" ]]', doctor)
+        self.assertIn("expected root:root", doctor)
+        self.assertIn("expected 600 or 400", doctor)
+
     def test_server_doctor_checks_every_runtime_used_by_core_workflow(self):
         doctor = self.function_body("server_doctor", "server_unimplemented")
         for command in ("curl", "git", "jq", "tar", "gh", "python3"):
