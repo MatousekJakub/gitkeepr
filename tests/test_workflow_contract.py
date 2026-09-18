@@ -163,5 +163,18 @@ class WorkflowContractTests(unittest.TestCase):
         )
 
 
+    def test_third_party_actions_are_pinned_in_executing_workflows(self):
+        expected = (
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7",
+            "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9",
+            "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3",
+        )
+        combined = CORE + SELF_GATE + (ROOT / ".github/workflows/ci.yml").read_text()
+        for pin in expected:
+            self.assertIn(pin, combined)
+        for floating in ("actions/checkout@v7", "actions/github-script@v9", "actions/create-github-app-token@v3"):
+            self.assertNotIn(floating, combined)
+
+
 if __name__ == "__main__":
     unittest.main()
