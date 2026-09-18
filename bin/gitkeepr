@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.1.0-bootstrap"
+VERSION="0.1.0"
 RAW_BASE="${GITKEEPR_RAW_BASE:-https://raw.githubusercontent.com/MatousekJakub/gitkeepr/main}"
 WORKFLOW_PATH=".github/workflows/gitkeepr.yml"
 SERVER_CONFIG="/etc/gitkeepr/config"
+CACHE_DIR="/var/cache/gitkeepr"
+RUNNER_USER="github-runner"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -22,11 +24,6 @@ Usage:
   gitkeepr runner add OWNER/REPO
   gitkeepr runner remove OWNER/REPO
   gitkeepr version
-
-Bootstrap status:
-  Project init and read-only diagnostics are implemented first. Server setup and
-  runner lifecycle commands are introduced incrementally; unfinished commands
-  fail clearly.
 USAGE
 }
 
@@ -47,6 +44,228 @@ prompt_value() {
   local prompt="$1" default="$2" value
   read -r -p "$prompt [$default]: " value
   printf '%s' "${value:-$default}"
+}
+
+require_admin() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    return 0
+  fi
+  require_cmd sudo
+  sudo -v
+}
+
+as_root() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+runner_home() {
+  getent passwd "$RUNNER_USER" | cut -d: -f6
+}
+
+as_runner() {
+  local home
+  home="$(runner_home)"
+  [[ -n "$home" ]] || die "Could not resolve home directory for $RUNNER_USER."
+  if [[ "$(id -u)" -eq 0 ]]; then
+    runuser -u "$RUNNER_USER" -- env HOME="$home" "$@"
+  else
+    sudo -H -u "$RUNNER_USER" env HOME="$home" "$@"
+  fi
+}
+
+read_protected_file() {
+  local path="$1"
+  if [[ "$(id -u)" -eq 0 ]]; then
+    cat "$path"
+  else
+    sudo cat "$path"
+  fi
+}
+
+runner_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) printf '%s' "x64" ;;
+    aarch64|arm64) printf '%s' "arm64" ;;
+    *) die "Unsupported architecture: $(uname -m). GitKeepr V1 supports amd64/x64 and arm64." ;;
+  esac
+}
+
+runner_cache_path() {
+  printf '%s/actions-runner-linux-%s.tar.gz' "$CACHE_DIR" "$(runner_arch)"
+}
+
+runner_opencode_path() {
+  local home path
+  home="$(runner_home)"
+  [[ -n "$home" ]] || return 1
+  if [[ -x "$home/.opencode/bin/opencode" ]]; then
+    printf '%s' "$home/.opencode/bin/opencode"
+    return 0
+  fi
+  path="$(as_runner bash -lc 'command -v opencode' 2>/dev/null || true)"
+  [[ -n "$path" ]] || return 1
+  printf '%s' "$path"
+}
+
+load_server_config() {
+  local contents="" key="" value=""
+  APP_CLIENT_ID=""
+  APP_KEY_PATH=""
+
+  [[ -e "$SERVER_CONFIG" ]] || die "$SERVER_CONFIG is missing. Run 'gitkeepr server init' first."
+  contents="$(read_protected_file "$SERVER_CONFIG" 2>/dev/null || true)"
+  [[ -n "$contents" ]] || die "$SERVER_CONFIG is unreadable or empty."
+
+  while IFS='=' read -r key value; do
+    case "$key" in
+      GITKEEPR_APP_CLIENT_ID) APP_CLIENT_ID="$value" ;;
+      GITKEEPR_APP_PRIVATE_KEY_PATH) APP_KEY_PATH="$value" ;;
+      GITKEEPR_RUNNER_USER)
+        [[ -z "$value" || "$value" == "$RUNNER_USER" ]] || die "Unsupported runner user in $SERVER_CONFIG: $value"
+        ;;
+    esac
+  done <<< "$contents"
+
+  [[ -n "$APP_CLIENT_ID" ]] || die "GITKEEPR_APP_CLIENT_ID is missing in $SERVER_CONFIG."
+  [[ -n "$APP_KEY_PATH" ]] || die "GITKEEPR_APP_PRIVATE_KEY_PATH is missing in $SERVER_CONFIG."
+  as_root test -r "$APP_KEY_PATH" || die "GitHub App private key is not readable: $APP_KEY_PATH"
+}
+
+base64url() {
+  openssl base64 -A | tr '+/' '-_' | tr -d '='
+}
+
+github_app_jwt() {
+  local now iat exp header payload unsigned signature
+  now="$(date +%s)"
+  iat=$((now - 60))
+  exp=$((now + 540))
+  header='{"alg":"RS256","typ":"JWT"}'
+  payload="$(printf '{"iat":%s,"exp":%s,"iss":"%s"}' "$iat" "$exp" "$APP_CLIENT_ID")"
+  unsigned="$(printf '%s' "$header" | base64url).$(printf '%s' "$payload" | base64url)"
+  signature="$(printf '%s' "$unsigned" | as_root openssl dgst -sha256 -sign "$APP_KEY_PATH" | base64url)"
+  printf '%s.%s' "$unsigned" "$signature"
+}
+
+verify_app_access() {
+  local repo="$1" jwt installation permissions
+  jwt="$(github_app_jwt)"
+  if ! installation="$(curl -fsS     -H "Accept: application/vnd.github+json"     -H "Authorization: Bearer $jwt"     "https://api.github.com/repos/$repo/installation")"; then
+    die "GitKeepr GitHub App is not installed for $repo or the configured App credentials are invalid."
+  fi
+
+  permissions="$(printf '%s' "$installation" | jq -r '.permissions | [.contents, .issues, .pull_requests, .workflows] | @tsv')"
+  [[ "$permissions" == $'write\twrite\twrite\twrite' ]] || die "GitKeepr App installation for $repo does not expose the required write permissions (Contents, Issues, Pull requests, Workflows)."
+  say "OK    GitKeepr App access verified for $repo"
+}
+
+verify_project_vars() {
+  local repo="$1" name value missing=0
+  for name in GITKEEPR_BUILD_MODEL GITKEEPR_BUILD_VARIANT GITKEEPR_REVIEW_MODEL GITKEEPR_REVIEW_VARIANT GITKEEPR_MAX_CYCLES; do
+    value="$(current_var "$repo" "$name")"
+    if [[ -n "$value" ]]; then
+      say "OK    Repository variable $name is configured"
+    else
+      say "FAIL  Repository variable $name is missing or empty"
+      missing=1
+    fi
+  done
+  [[ "$missing" -eq 0 ]] || die "Repository variables are incomplete. Run 'gitkeepr init' in the project checkout first."
+}
+
+sync_app_credentials() {
+  local repo="$1"
+  gh variable set GITKEEPR_APP_CLIENT_ID -R "$repo" --body "$APP_CLIENT_ID"
+  read_protected_file "$APP_KEY_PATH" | gh secret set GITKEEPR_APP_PRIVATE_KEY -R "$repo"
+  say "OK    Synchronized GitKeepr App variable and secret"
+}
+
+upstream_repo_from_raw_base() {
+  local rest
+  rest="${RAW_BASE#https://raw.githubusercontent.com/}"
+  if [[ "$rest" == "$RAW_BASE" ]]; then
+    return 1
+  fi
+  printf '%s/%s' "${rest%%/*}" "$(printf '%s' "${rest#*/}" | cut -d/ -f1)"
+}
+
+validate_target_repo() {
+  local repo="$1" visibility upstream=""
+  [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "Repository must be in OWNER/REPO form."
+  gh repo view "$repo" >/dev/null 2>&1 || die "Repository $repo is not accessible with the admin gh login."
+
+  visibility="$(gh repo view "$repo" --json visibility -q .visibility)"
+  if [[ "${visibility,,}" == "public" ]]; then
+    upstream="$(upstream_repo_from_raw_base || true)"
+    if [[ -z "$upstream" || "$repo" != "$upstream" ]]; then
+      die "Standard GitKeepr V1 runner setup does not support public target repositories."
+    fi
+    gh api "repos/$repo/contents/.github/workflows/self-gate.yml" >/dev/null 2>&1 ||
+      die "Public GitKeepr self-development requires .github/workflows/self-gate.yml on the default branch."
+    say "OK    Public upstream repository accepted through the GitKeepr self-development gate"
+  else
+    say "OK    Private target repository"
+  fi
+}
+
+runner_dir_for() {
+  local repo="$1"
+  printf '%s/runners/%s' "$(runner_home)" "${repo//\//-}"
+}
+
+runner_name_for() {
+  local repo="$1" host repo_part
+  host="$(hostname -s | tr -c 'A-Za-z0-9._-' '-')"
+  repo_part="${repo#*/}"
+  repo_part="$(printf '%s' "$repo_part" | tr -c 'A-Za-z0-9._-' '-')"
+  printf '%s-%s' "$host" "$repo_part"
+}
+
+runner_record() {
+  local repo="$1" name="$2"
+  gh api "repos/$repo/actions/runners?per_page=100"     --jq ".runners[] | select(.name == \"$name\") | [.id, .status, (.busy|tostring)] | @tsv" |
+    head -n1
+}
+
+runner_service_healthy() {
+  local dir="$1"
+  [[ -x "$dir/svc.sh" ]] || return 1
+  as_root bash -c 'cd "$1" && ./svc.sh status >/dev/null 2>&1' _ "$dir"
+}
+
+warn_if_caller_missing() {
+  local repo="$1"
+  if gh api "repos/$repo/contents/.github/workflows/gitkeepr.yml" >/dev/null 2>&1; then
+    say "OK    .github/workflows/gitkeepr.yml is visible on the default branch"
+  else
+    say "WARN  .github/workflows/gitkeepr.yml is not visible on the default branch yet; commit/push it from the project checkout when ready"
+  fi
+}
+
+remove_runner_installation() {
+  local repo="$1" dir="$2" runner_id="$3" token=""
+
+  if [[ -x "$dir/svc.sh" ]]; then
+    as_root bash -c 'cd "$1" && ./svc.sh stop >/dev/null 2>&1 || true' _ "$dir"
+    as_root bash -c 'cd "$1" && ./svc.sh uninstall >/dev/null 2>&1 || true' _ "$dir"
+  fi
+
+  if [[ -x "$dir/config.sh" && -f "$dir/.runner" ]]; then
+    token="$(gh api -X POST "repos/$repo/actions/runners/remove-token" --jq .token)"
+    as_runner bash -c 'cd "$1" && ./config.sh remove --token "$2"' _ "$dir" "$token" || true
+  fi
+
+  if [[ -n "$runner_id" ]]; then
+    gh api -X DELETE "repos/$repo/actions/runners/$runner_id" >/dev/null 2>&1 || true
+  fi
+
+  if [[ -d "$dir" ]]; then
+    as_root rm -rf "$dir"
+  fi
 }
 
 project_init() {
@@ -133,12 +352,19 @@ project_doctor() {
   require_cmd git
   require_cmd gh
   local failed=0 repo="" visibility="" name value tmp=""
+
   if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
     say "FAIL  Git repository not detected"
     return 1
   fi
   say "OK    Git repository detected"
-  if gh auth status >/dev/null 2>&1; then say "OK    gh authenticated"; else say "FAIL  gh not authenticated"; failed=1; fi
+
+  if gh auth status >/dev/null 2>&1; then
+    say "OK    gh authenticated"
+  else
+    say "FAIL  gh not authenticated"
+    failed=1
+  fi
 
   repo="$(repo_name 2>/dev/null || true)"
   if [[ -n "$repo" ]]; then
@@ -169,6 +395,7 @@ project_doctor() {
         failed=1
       fi
     done
+
     value="$(current_var "$repo" GITKEEPR_MAX_CYCLES)"
     if [[ -n "$value" && ! "$value" =~ ^[1-9][0-9]*$ ]]; then
       say "FAIL  GITKEEPR_MAX_CYCLES must be a positive integer"
@@ -210,6 +437,7 @@ project_doctor() {
 
 server_doctor() {
   local failed=0 os_id="" os_like="" arch config_client="" config_key="" config_contents="" mode="" owner=""
+  local opencode_path="" cache_path="" home="" service_count="" free_kb=""
 
   if [[ -r /etc/os-release ]]; then
     # shellcheck disable=SC1091
@@ -238,11 +466,11 @@ server_doctor() {
   esac
 
   local cmd
-  for cmd in curl git jq tar gh python3; do
+  for cmd in curl git jq tar gh python3 openssl; do
     if command -v "$cmd" >/dev/null 2>&1; then
       say "OK    $cmd available"
     else
-      say "FAIL  $cmd missing; run 'gitkeepr server init' once server setup is available"
+      say "FAIL  $cmd missing; run 'gitkeepr server init'"
       failed=1
     fi
   done
@@ -254,18 +482,23 @@ server_doctor() {
     failed=1
   fi
 
-  if id github-runner >/dev/null 2>&1; then
-    say "OK    github-runner user exists"
-    if [[ "$(id -u)" -eq 0 ]] && runuser -u github-runner -- sh -c 'command -v opencode >/dev/null 2>&1' 2>/dev/null; then
-      say "OK    OpenCode available to github-runner"
-    elif [[ "$(id -u)" -ne 0 ]] && sudo -u github-runner sh -c 'command -v opencode >/dev/null 2>&1'; then
-      say "OK    OpenCode available to github-runner"
+  if id "$RUNNER_USER" >/dev/null 2>&1; then
+    say "OK    $RUNNER_USER user exists"
+    opencode_path="$(runner_opencode_path 2>/dev/null || true)"
+    if [[ -n "$opencode_path" ]]; then
+      say "OK    OpenCode available to $RUNNER_USER: $opencode_path"
+      if as_runner "$opencode_path" models >/dev/null 2>&1; then
+        say "OK    OpenCode model listing works"
+      else
+        say "FAIL  'opencode models' failed for $RUNNER_USER"
+        failed=1
+      fi
     else
-      say "FAIL  OpenCode is not available to github-runner"
+      say "FAIL  OpenCode is not available to $RUNNER_USER"
       failed=1
     fi
   else
-    say "FAIL  github-runner user missing"
+    say "FAIL  $RUNNER_USER user missing"
     failed=1
   fi
 
@@ -286,7 +519,14 @@ server_doctor() {
         GITKEEPR_APP_PRIVATE_KEY_PATH) config_key="$value" ;;
       esac
     done <<< "$config_contents"
-    if [[ -n "$config_client" ]]; then say "OK    App Client ID configured"; else say "FAIL  GITKEEPR_APP_CLIENT_ID missing in $SERVER_CONFIG"; failed=1; fi
+
+    if [[ -n "$config_client" ]]; then
+      say "OK    App Client ID configured"
+    else
+      say "FAIL  GITKEEPR_APP_CLIENT_ID missing in $SERVER_CONFIG"
+      failed=1
+    fi
+
     if [[ -n "$config_key" ]]; then
       if [[ "$(id -u)" -eq 0 ]] && [[ -r "$config_key" ]]; then
         say "OK    App private key path is readable"
@@ -300,7 +540,14 @@ server_doctor() {
       say "FAIL  App private key path missing or unreadable"
       failed=1
     fi
-    if [[ "$owner" == "root:root" ]]; then say "OK    $SERVER_CONFIG is root-owned"; else say "FAIL  $SERVER_CONFIG owner is ${owner:-unknown}; expected root:root"; failed=1; fi
+
+    if [[ "$owner" == "root:root" ]]; then
+      say "OK    $SERVER_CONFIG is root-owned"
+    else
+      say "FAIL  $SERVER_CONFIG owner is ${owner:-unknown}; expected root:root"
+      failed=1
+    fi
+
     if [[ "$mode" == "600" || "$mode" == "400" ]]; then
       say "OK    $SERVER_CONFIG permissions are restrictive ($mode)"
     else
@@ -312,6 +559,36 @@ server_doctor() {
     failed=1
   fi
 
+  if id "$RUNNER_USER" >/dev/null 2>&1; then
+    home="$(runner_home)"
+    cache_path="$(runner_cache_path 2>/dev/null || true)"
+    if [[ -n "$cache_path" && -r "$cache_path" ]]; then
+      say "OK    Actions runner package cache exists: $cache_path"
+    else
+      say "FAIL  Actions runner package cache missing; run 'gitkeepr server init'"
+      failed=1
+    fi
+
+    free_kb="$(df -Pk "$home" 2>/dev/null | awk 'NR==2 {print $4}')"
+    if [[ -n "$free_kb" ]]; then
+      say "OK    Runner filesystem free space: $((free_kb / 1024)) MiB"
+    else
+      say "WARN  Could not determine runner filesystem free space"
+    fi
+
+    if [[ -d "$home/runners" ]]; then
+      service_count="$(find "$home/runners" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+      say "OK    Repository runner directories: $service_count"
+    else
+      say "OK    No repository runner directories configured yet"
+    fi
+  fi
+
+  if command -v systemctl >/dev/null 2>&1; then
+    service_count="$(systemctl list-units --type=service 'actions.runner.*' --no-legend 2>/dev/null | wc -l | tr -d ' ')"
+    say "OK    Loaded Actions runner services: $service_count"
+  fi
+
   if [[ "$failed" -eq 0 ]]; then
     say "PASS  Server prerequisites look healthy."
   else
@@ -320,29 +597,296 @@ server_doctor() {
   return "$failed"
 }
 
-server_unimplemented() {
-  die "This server/runner command is not implemented in the first light bootstrap iteration yet. See docs/implementation-plan.md."
+server_init() {
+  require_admin
+
+  local os_id="" os_like="" arch="" home="" opencode_path="" existing_config=""
+  local existing_client="" existing_key="" client_id="" key_path="" tmp=""
+  local cache_path="" release_json="" asset_url="" runner_arch_value=""
+
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    os_id="${ID:-}"
+    os_like="${ID_LIKE:-}"
+  fi
+  [[ "$os_id" == "ubuntu" || "$os_id" == "debian" || " $os_like " == *" debian "* ]] ||
+    die "GitKeepr V1 server init supports Ubuntu/Debian only."
+  [[ -d /run/systemd/system ]] || die "systemd is required."
+
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64|amd64|aarch64|arm64) ;;
+    *) die "Unsupported architecture: $arch. GitKeepr V1 supports amd64/x64 and arm64." ;;
+  esac
+
+  say "Installing/confirming server prerequisites..."
+  as_root apt-get update
+  as_root apt-get install -y curl git jq tar ca-certificates gh python3 openssl
+
+  if ! id "$RUNNER_USER" >/dev/null 2>&1; then
+    say "Creating dedicated $RUNNER_USER user..."
+    as_root useradd --create-home --shell /bin/bash "$RUNNER_USER"
+  else
+    say "$RUNNER_USER already exists."
+  fi
+  home="$(runner_home)"
+  [[ -n "$home" ]] || die "Could not resolve $RUNNER_USER home directory."
+
+  if gh auth status >/dev/null 2>&1; then
+    say "Admin gh authentication is already configured."
+  else
+    say "GitHub CLI authentication is required for runner lifecycle and repository configuration."
+    gh auth login
+    gh auth status >/dev/null 2>&1 || die "gh authentication did not complete successfully."
+  fi
+
+  opencode_path="$(runner_opencode_path 2>/dev/null || true)"
+  if [[ -z "$opencode_path" ]]; then
+    say "Installing OpenCode for $RUNNER_USER..."
+    as_runner bash -lc 'curl -fsSL https://opencode.ai/install | bash'
+    opencode_path="$(runner_opencode_path 2>/dev/null || true)"
+    [[ -n "$opencode_path" ]] || die "OpenCode installation finished but the executable could not be found for $RUNNER_USER."
+  else
+    say "OpenCode already exists for $RUNNER_USER:"
+    as_runner "$opencode_path" --version || true
+  fi
+
+  say ""
+  say "OpenCode authentication is intentionally interactive and runs every time 'gitkeepr server init' runs."
+  as_runner "$opencode_path" auth login
+  say ""
+  say "Models visible to $RUNNER_USER:"
+  as_runner "$opencode_path" models
+
+  as_root install -d -o root -g root -m 0755 "$CACHE_DIR"
+  runner_arch_value="$(runner_arch)"
+  cache_path="$(runner_cache_path)"
+  if [[ -r "$cache_path" ]]; then
+    say "Actions runner package cache already exists: $cache_path"
+  else
+    say "Downloading the current stable GitHub Actions runner package for linux-$runner_arch_value..."
+    release_json="$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest)"
+    asset_url="$(printf '%s' "$release_json" | jq -r --arg arch "$runner_arch_value" '
+      .assets[]
+      | select(.name | test("^actions-runner-linux-" + $arch + "-.*\\.tar\\.gz$"))
+      | .browser_download_url
+    ' | head -n1)"
+    [[ -n "$asset_url" && "$asset_url" != "null" ]] || die "Could not resolve the current stable linux-$runner_arch_value Actions runner package."
+    tmp="$(mktemp)"
+    curl -fsSL "$asset_url" -o "$tmp"
+    as_root install -o root -g root -m 0644 "$tmp" "$cache_path"
+    rm -f "$tmp"
+    say "Cached Actions runner package at $cache_path"
+  fi
+
+  if [[ -e "$SERVER_CONFIG" ]]; then
+    existing_config="$(read_protected_file "$SERVER_CONFIG" 2>/dev/null || true)"
+    while IFS='=' read -r key value; do
+      case "$key" in
+        GITKEEPR_APP_CLIENT_ID) existing_client="$value" ;;
+        GITKEEPR_APP_PRIVATE_KEY_PATH) existing_key="$value" ;;
+      esac
+    done <<< "$existing_config"
+  fi
+
+  say ""
+  say "Create/install the GitKeepr GitHub App manually with repository permissions:"
+  say "  Contents: Read and write"
+  say "  Issues: Read and write"
+  say "  Pull requests: Read and write"
+  say "  Workflows: Read and write"
+  say "Install it using 'Only selected repositories'."
+  say ""
+
+  client_id="$(prompt_value "GitHub App Client ID" "$existing_client")"
+  [[ -n "$client_id" ]] || die "GitHub App Client ID is required."
+
+  key_path="$(prompt_value "GitHub App private key path" "$existing_key")"
+  [[ -n "$key_path" ]] || die "GitHub App private key path is required."
+  if [[ "$key_path" == "~/"* ]]; then
+    key_path="$HOME/${key_path#~/}"
+  fi
+  as_root test -r "$key_path" || die "Private key is not readable: $key_path"
+
+  tmp="$(mktemp)"
+  printf 'GITKEEPR_APP_CLIENT_ID=%s\nGITKEEPR_APP_PRIVATE_KEY_PATH=%s\nGITKEEPR_RUNNER_USER=%s\n'     "$client_id" "$key_path" "$RUNNER_USER" > "$tmp"
+  as_root install -d -o root -g root -m 0700 "$(dirname "$SERVER_CONFIG")"
+  as_root install -o root -g root -m 0600 "$tmp" "$SERVER_CONFIG"
+  rm -f "$tmp"
+
+  say ""
+  say "Server initialization complete."
+  say "Configuration: $SERVER_CONFIG"
+  say "Runner package cache: $cache_path"
+  say "Existing repository runners were not modified."
+}
+
+runner_add() {
+  [[ $# -eq 1 ]] || die "Usage: gitkeepr runner add OWNER/REPO"
+  local repo="$1" home="" dir="" name="" record="" runner_id="" status="" busy=""
+  local cache_path="" answer="" token="" repo_url="" online=false
+
+  require_admin
+  require_cmd gh
+  require_cmd curl
+  require_cmd jq
+  require_cmd tar
+  require_cmd openssl
+  gh auth status >/dev/null 2>&1 || die "Admin gh is not authenticated. Run 'gh auth login'."
+  id "$RUNNER_USER" >/dev/null 2>&1 || die "$RUNNER_USER does not exist. Run 'gitkeepr server init'."
+
+  load_server_config
+  validate_target_repo "$repo"
+  verify_project_vars "$repo"
+  verify_app_access "$repo"
+  sync_app_credentials "$repo"
+  warn_if_caller_missing "$repo"
+
+  home="$(runner_home)"
+  dir="$(runner_dir_for "$repo")"
+  name="$(runner_name_for "$repo")"
+  cache_path="$(runner_cache_path)"
+  [[ -r "$cache_path" ]] || die "Actions runner package cache is missing. Run 'gitkeepr server init'."
+
+  record="$(runner_record "$repo" "$name" || true)"
+  if [[ -n "$record" ]]; then
+    IFS=$'\t' read -r runner_id status busy <<< "$record"
+  fi
+
+  if [[ -d "$dir" && -f "$dir/.runner" && "$status" == "online" ]] && runner_service_healthy "$dir"; then
+    say "OK    Runner $name is already configured and online."
+    say "OK    App credentials were resynchronized."
+    return 0
+  fi
+
+  if [[ -d "$dir" || -n "$record" ]]; then
+    say "Existing GitKeepr runner state for $repo is unhealthy or incomplete."
+    read -r -p "Reconfigure it? [y/N]: " answer
+    [[ "$answer" =~ ^[Yy]$ ]] || die "Runner was left unchanged."
+    remove_runner_installation "$repo" "$dir" "$runner_id"
+  fi
+
+  as_root install -d -o "$RUNNER_USER" -g "$RUNNER_USER" -m 0755 "$home/runners" "$dir"
+  as_runner tar -xzf "$cache_path" -C "$dir"
+
+  if [[ -x "$dir/bin/installdependencies.sh" ]]; then
+    as_root bash -c 'cd "$1" && ./bin/installdependencies.sh' _ "$dir"
+  fi
+
+  token="$(gh api -X POST "repos/$repo/actions/runners/registration-token" --jq .token)"
+  [[ -n "$token" ]] || die "GitHub did not return a runner registration token."
+  repo_url="https://github.com/$repo"
+
+  as_runner bash -c '
+    cd "$1"
+    ./config.sh       --unattended       --url "$2"       --token "$3"       --name "$4"       --labels gitkeepr       --work _work
+  ' _ "$dir" "$repo_url" "$token" "$name"
+
+  as_root bash -c 'cd "$1" && ./svc.sh install "$2"' _ "$dir" "$RUNNER_USER"
+  as_root bash -c 'cd "$1" && ./svc.sh start' _ "$dir"
+
+  for _ in $(seq 1 30); do
+    record="$(runner_record "$repo" "$name" || true)"
+    if [[ -n "$record" ]]; then
+      IFS=$'\t' read -r runner_id status busy <<< "$record"
+      if [[ "$status" == "online" ]]; then
+        online=true
+        break
+      fi
+    fi
+    sleep 2
+  done
+
+  [[ "$online" == "true" ]] || die "Runner service was installed, but GitHub did not report $name online within 60 seconds. Run 'gitkeepr server doctor' and inspect the runner service."
+
+  say "PASS  Runner $name is registered, running, and online for $repo."
+}
+
+runner_remove() {
+  [[ $# -eq 1 ]] || die "Usage: gitkeepr runner remove OWNER/REPO"
+  local repo="$1" dir="" name="" record="" runner_id="" status="" busy=""
+
+  require_admin
+  require_cmd gh
+  gh auth status >/dev/null 2>&1 || die "Admin gh is not authenticated. Run 'gh auth login'."
+  id "$RUNNER_USER" >/dev/null 2>&1 || die "$RUNNER_USER does not exist."
+
+  [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "Repository must be in OWNER/REPO form."
+  gh repo view "$repo" >/dev/null 2>&1 || die "Repository $repo is not accessible with the admin gh login."
+
+  dir="$(runner_dir_for "$repo")"
+  name="$(runner_name_for "$repo")"
+  record="$(runner_record "$repo" "$name" || true)"
+  if [[ -n "$record" ]]; then
+    IFS=$'\t' read -r runner_id status busy <<< "$record"
+  fi
+
+  if [[ ! -d "$dir" && -z "$record" ]]; then
+    say "Runner $name is not configured for $repo."
+    return 0
+  fi
+
+  remove_runner_installation "$repo" "$dir" "$runner_id"
+  say "PASS  Removed GitKeepr runner $name for $repo."
+  say "Repository variables, secrets, and workflow files were left unchanged."
 }
 
 case "${1:-}" in
-  init) shift; [[ $# -eq 0 ]] || die "Unexpected arguments to init."; project_init ;;
-  doctor) shift; [[ $# -eq 0 ]] || die "Unexpected arguments to doctor."; project_doctor ;;
+  init)
+    shift
+    [[ $# -eq 0 ]] || die "Unexpected arguments to init."
+    project_init
+    ;;
+  doctor)
+    shift
+    [[ $# -eq 0 ]] || die "Unexpected arguments to doctor."
+    project_doctor
+    ;;
   server)
     shift
     case "${1:-}" in
-      init) shift; [[ $# -eq 0 ]] || die "Unexpected arguments to server init."; server_unimplemented ;;
-      doctor) shift; [[ $# -eq 0 ]] || die "Unexpected arguments to server doctor."; server_doctor ;;
-      *) usage; exit 2 ;;
+      init)
+        shift
+        [[ $# -eq 0 ]] || die "Unexpected arguments to server init."
+        server_init
+        ;;
+      doctor)
+        shift
+        [[ $# -eq 0 ]] || die "Unexpected arguments to server doctor."
+        server_doctor
+        ;;
+      *)
+        usage
+        exit 2
+        ;;
     esac
     ;;
   runner)
     shift
     case "${1:-}" in
-      add|remove) server_unimplemented ;;
-      *) usage; exit 2 ;;
+      add)
+        shift
+        runner_add "$@"
+        ;;
+      remove)
+        shift
+        runner_remove "$@"
+        ;;
+      *)
+        usage
+        exit 2
+        ;;
     esac
     ;;
-  version|--version|-v) say "$VERSION" ;;
-  help|--help|-h|"") usage ;;
-  *) usage; exit 2 ;;
+  version|--version|-v)
+    say "$VERSION"
+    ;;
+  help|--help|-h|"")
+    usage
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
 esac
