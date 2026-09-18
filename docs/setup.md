@@ -1,13 +1,9 @@
-# Setup Contract
-
-This document describes the intended V1 user experience. Exact commands may evolve while the bootstrap implementation is being completed.
+# Setup
 
 ## 1. Install the CLI
 
-The intended distribution flow is:
-
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/gitkeepr/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/MatousekJakub/gitkeepr/main/install.sh | bash
 ```
 
 `install.sh` only installs/updates `gitkeepr` in `~/.local/bin` and prints a PATH hint when necessary.
@@ -18,56 +14,33 @@ curl -fsSL https://raw.githubusercontent.com/<owner>/gitkeepr/main/install.sh | 
 gitkeepr server init
 ```
 
-Server init should:
-
-- verify Ubuntu/Debian + systemd + supported architecture;
-- install basic apt prerequisites;
-- create `github-runner` when missing;
-- ensure the admin user's `gh` is authenticated (interactive `gh auth login` when needed);
-- install OpenCode for `github-runner` when missing;
-- run interactive `opencode auth login` as `github-runner`;
-- print `opencode models`;
-- download/cache the current stable GitHub Actions runner package;
-- ask for GitHub App Client ID and private-key path;
-- store those values in `/etc/gitkeepr/config` with restrictive permissions.
-
-GitHub App creation remains a documented manual step.
+Server init verifies Ubuntu/Debian + systemd + supported architecture, installs prerequisites, creates `github-runner` if needed, ensures the admin `gh` login, installs OpenCode if missing, always runs `opencode auth login` as `github-runner`, displays `opencode models`, caches the stable Actions runner package, and writes the GitHub App Client ID plus PEM path to root-owned `/etc/gitkeepr/config` mode 0600. Existing repository runners are not modified.
 
 ## 3. Create/install the GitHub App
 
-Create a GitHub App with repository permissions:
+Create the App manually with repository permissions:
 
-- Contents RW
-- Issues RW
-- Pull requests RW
-- Workflows RW
+- Contents: Read and write
+- Issues: Read and write
+- Pull requests: Read and write
+- Workflows: Read and write
+- Metadata: Read (implicit)
 
-Install it using **Only selected repositories** and add each managed repository before running `gitkeepr init`.
+Install it using **Only selected repositories**. Add each managed repository before initialization.
 
 ## 4. Initialize a private project
 
-Inside the project checkout:
+Inside its checkout:
 
 ```bash
 gitkeepr init
 ```
 
-The command should:
+Standard V1 init rejects public repositories. It asks you to confirm App installation, configures the five model/loop variables, and downloads the current caller template. The only versioned file it creates/replaces is `.github/workflows/gitkeepr.yml`; it never stages, commits, pushes, stashes, or resets.
 
-- require `git`, `gh`, and authenticated `gh`;
-- detect the repository from the current checkout;
-- reject standard V1 initialization for public repositories;
-- require explicit confirmation that the GitHub App has already been added;
-- load existing model/max-cycle variables when present;
-- interactively configure the five `GITKEEPR_*` model/loop variables;
-- fetch the current caller template from GitKeepr `main`;
-- create only `.github/workflows/gitkeepr.yml`;
-- never commit or stage;
-- print `git status --short` and the exact VPS `runner add owner/repo` command.
+Commit/push the caller yourself after inspection.
 
-If the workflow already exists and differs, show a diff and ask before replacement.
-
-## 5. Add the per-repository runner
+## 5. Add the repository runner
 
 On the VPS:
 
@@ -75,22 +48,23 @@ On the VPS:
 gitkeepr runner add owner/repo
 ```
 
-Normal operation must acquire GitHub registration/remove tokens automatically, configure a repository-level runner, install/start the systemd service, synchronize App credentials, and verify health.
+The command verifies project variables and App access, synchronizes App credentials, acquires a fresh registration token, installs one repository-level runner with label `gitkeepr`, starts its systemd service, and waits for GitHub to report it online.
 
-The target workflow does not have to be pushed before `runner add`; if it is not yet visible on the default branch, print a warning instead of failing.
+A healthy repeated `runner add` does not reconfigure the runner and resynchronizes credentials. An unhealthy/incomplete runner asks before automated reconfiguration.
+
+Remove only runner/service/directory with:
+
+```bash
+gitkeepr runner remove owner/repo
+```
+
+Repository variables, secrets, and workflow files are deliberately retained.
 
 ## Diagnostics
 
-Project side:
-
 ```bash
 gitkeepr doctor
-```
-
-Server side:
-
-```bash
 gitkeepr server doctor
 ```
 
-Doctors diagnose and recommend commands; they do not silently auto-repair.
+Doctors are diagnostic and recommend action rather than silently repairing state. GitHub Settings → Actions → Runners → New self-hosted runner remains the manual troubleshooting fallback.

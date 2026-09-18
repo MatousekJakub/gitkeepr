@@ -2,24 +2,31 @@
 
 > Automation-owned working plan. Keep this synchronized with reality while respecting human-owned decisions.
 
-## Bootstrap priorities
+## V1 implementation status
 
-1. Establish the clean repository, documentation, MIT license, installer, and shell CLI.
-2. Implement a useful `gitkeepr init` matching the approved project-side contract.
-3. Port the tested PR Build/Review behavior from the PoC into reusable `.github/workflows/pr-loop.yml`, including the idempotence failure-marker fix and `gitkeepr:*` labels.
-4. Add the small target caller template with the tested event set and cheap trust filtering.
-5. Implement `server init` for supported Ubuntu/Debian hosts.
-6. Implement automated `runner add`, runner health/reconfigure, and `runner remove`.
-7. Implement project/server doctors.
-8. Implement the public-repository self-dogfood safety gate for GitKeepr itself.
-9. Add focused tests for CLI parsing, template generation, trust conditions, and shell behavior where practical.
-10. Tighten documentation from real usage rather than speculative abstractions.
+The planned implementation blocks are present:
 
-## Important implementation constraints
+1. Clean repository, source-of-truth documentation, MIT license, installer, and shell CLI.
+2. `gitkeepr init` with the approved project-side contract and no Git-history ownership.
+3. Complete reusable Build ↔ Review loop with configured models/variants, max cycles, no-progress protection, direct replies, status labels, blocked UX, and success-only processed markers.
+4. Small target caller with the tested event set and conservative cheap trust filtering.
+5. `gitkeepr server init` for Ubuntu/Debian + systemd on amd64/arm64.
+6. Automated `runner add`, healthy repeat behavior, unhealthy reconfiguration, and `runner remove`.
+7. Project/server doctors.
+8. Public GitKeepr self-development gate on a GitHub-hosted runner before candidate core dispatch.
+9. Focused CLI/workflow contract tests and shell syntax CI.
+10. Third-party GitHub Actions pinned to full commit SHAs.
 
-- Do not add a generic verification-command framework in V1.
-- Do not add global concurrency locking until there is an observed problem.
-- Do not add Dependabot-specific logic.
-- Do not require a clean working tree for project init.
-- Do not copy model discovery over SSH.
-- Do not automate GitHub App creation/installation.
+## Before declaring V1 operationally validated
+
+Do not invent another implementation phase. Execute the live smoke checklist in `docs/testing.md`, fix only observed defects, and keep `docs/known-issues.md` synchronized with those results.
+
+## Constraints that remain deliberate
+
+- No generic verification-command framework.
+- No global concurrency lock without an observed problem.
+- No Dependabot-specific integration.
+- No clean-working-tree requirement for project init.
+- No SSH model discovery from project init.
+- No automated GitHub App creation/installation.
+- No polling, custom dispatcher, database, or queue.
