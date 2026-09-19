@@ -545,10 +545,10 @@ install_node_runtime() {
   node_version="$(printf '%s' "$release_json" | jq -r '[.[] | select(.lts != false and .lts != null)][0].version // empty')"
   [[ -n "$node_version" ]] || die "Could not resolve the current Node.js LTS release."
 
-  tarball="node-\${node_version}-linux-\${node_arch}.tar.xz"
+  tarball="node-${node_version}-linux-${node_arch}.tar.xz"
   tmpdir="$(mktemp -d)"
-  curl -fsSL "https://nodejs.org/dist/\${node_version}/\${tarball}" -o "$tmpdir/$tarball"
-  curl -fsSL "https://nodejs.org/dist/\${node_version}/SHASUMS256.txt" -o "$tmpdir/SHASUMS256.txt"
+  curl -fsSL "https://nodejs.org/dist/${node_version}/${tarball}" -o "$tmpdir/$tarball"
+  curl -fsSL "https://nodejs.org/dist/${node_version}/SHASUMS256.txt" -o "$tmpdir/SHASUMS256.txt"
 
   expected_sha="$(awk -v file="$tarball" '$2 == file { print $1 }' "$tmpdir/SHASUMS256.txt")"
   [[ -n "$expected_sha" ]] || {
@@ -561,7 +561,7 @@ install_node_runtime() {
     die "Checksum verification failed for $tarball."
   }
 
-  install_dir="/opt/gitkeepr/node-\${node_version}"
+  install_dir="/opt/gitkeepr/node-${node_version}"
   if ! as_root test -x "$install_dir/bin/node"; then
     as_root install -d -o root -g root -m 0755 "$install_dir"
     as_root tar -xJf "$tmpdir/$tarball" -C "$install_dir" --strip-components=1
