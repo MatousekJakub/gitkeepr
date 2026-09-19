@@ -1,0 +1,1 @@
+Fork self-gate smoke test. This change must never reach the persistent GitKeepr runner.
