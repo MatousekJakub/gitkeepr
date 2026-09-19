@@ -40,6 +40,11 @@ Verify PR-opened Build, App push, Review CONTINUE/PASS, multi-cycle progress, PA
 
 ### Public GitKeepr self-development
 
+Public self-development PR events are first handled by the GitHub-hosted
+`.github/workflows/self-gate.yml`. Only same-repository PRs may dispatch
+`.github/workflows/pr-loop.yml` to the persistent self-hosted runner; fork PRs
+must never reach that runner.
+
 After configuring GitKeepr's own vars/secret/runner, verify a same-repo PR is dispatched by the GitHub-hosted self-gate and a fork PR never reaches the persistent runner.
 
 Record only observed failures in `docs/known-issues.md`.
