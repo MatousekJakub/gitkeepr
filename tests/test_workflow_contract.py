@@ -126,12 +126,22 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('git diff --exit-code || block "Review agent modified tracked repository files', loop)
         self.assertIn("review.count(\"<!-- gitkeepr-system-review:v1\") != 1", loop)
 
-    def test_no_progress_and_cycle_exhaustion_block(self):
+    def test_new_continue_review_gets_build_opportunity_before_no_progress_block(self):
         loop = CORE.split("- name: Run Build Review loop", 1)[1]
+        self.assertIn("build_had_continue_review=false", loop)
         self.assertIn(
+            'grep -Fq "<!-- gitkeepr-system-review:v1 head=${start_head} verdict=continue -->"',
+            loop,
+        )
+        self.assertIn(
+            'if [[ "$build_had_continue_review" == "true" && "$current_head" == "$start_head" ]]',
+            loop,
+        )
+        self.assertNotIn(
             'if [[ "$changed" == "false" || "$current_head" == "$start_head" ]]',
             loop,
         )
+        self.assertIn('review_context="$review_file"', loop)
         self.assertIn("stopping to avoid an infinite loop", loop)
         self.assertIn("exhausted GITKEEPR_MAX_CYCLES", loop)
         self.assertIn('set_gitkeepr_status "gitkeepr:building"', loop)
@@ -155,20 +165,41 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("triggerMarker", failure_block.split("let message =", 1)[0])
         self.assertIn("gitkeepr-system-blocked:v1", failure_block)
 
-    def test_direct_comment_reply_can_finish_without_review(self):
+    def test_direct_comment_reply_preserves_unresolved_review_status(self):
+        authorize = CORE.split("- name: Resolve and authorize trigger", 1)[1].split(
+            "- name: Duplicate trigger already handled", 1
+        )[0]
+        self.assertIn("const stableStatuses = new Set(['gitkeepr:waiting-human', 'gitkeepr:blocked'])", authorize)
+        self.assertIn("core.setOutput('prior_status', priorStatus)", authorize)
+        self.assertIn("core.setOutput('initial_review_verdict', initialReviewVerdict)", authorize)
+
         loop = CORE.split("- name: Run Build Review loop", 1)[1]
         self.assertIn(
             'if [[ "$changed" == "false" && "$TRIGGER_KIND" == "comment" && "$cycle" -eq 1 ]]',
             loop,
         )
+        self.assertIn('if [[ "$INITIAL_REVIEW_VERDICT" == "continue" ]]', loop)
+        self.assertIn('final_status="gitkeepr:blocked"', loop)
+        self.assertIn('printf \'final_status=%s\\n\' "$final_status" >> "$GITHUB_OUTPUT"', loop)
         self.assertIn('cp "$build_text_file" "$DIRECT_REPLY_FILE"', loop)
+
         publish = CORE.split("- name: Publish result and finalize status", 1)[1]
+        self.assertIn("REQUESTED_FINAL_STATUS: ${{ steps.loop.outputs.final_status }}", publish)
         self.assertIn("gitkeepr-system-reply:v1", publish)
 
-    def test_final_status_is_waiting_human_or_blocked(self):
+    def test_final_status_accepts_preserved_stable_status_only_on_success(self):
         publish = CORE.split("- name: Publish result and finalize status", 1)[1]
+        self.assertIn("const requestedFinalStatus = String(process.env.REQUESTED_FINAL_STATUS || '')", publish)
         self.assertIn(
-            "const target = succeeded ? 'gitkeepr:waiting-human' : 'gitkeepr:blocked'",
+            "const allowedFinalStatuses = new Set(['gitkeepr:waiting-human', 'gitkeepr:blocked'])",
+            publish,
+        )
+        self.assertIn(
+            "const target = succeeded && allowedFinalStatuses.has(requestedFinalStatus)",
+            publish,
+        )
+        self.assertIn(
+            ": succeeded ? 'gitkeepr:waiting-human' : 'gitkeepr:blocked'",
             publish,
         )
 
