@@ -153,6 +153,11 @@ jobs:
               return fail(`Refusing fork PR ${pr.head.repo?.full_name || '(unknown)'}; expected ${expectedRepo}`)
             }
 
+            const stableStatuses = new Set(['gitkeepr:waiting-human', 'gitkeepr:blocked'])
+            const priorStatus = (pr.labels || [])
+              .map(label => typeof label === 'string' ? label : String(label?.name || ''))
+              .find(name => stableStatuses.has(name)) || ''
+
             const comments = await github.paginate(github.rest.issues.listComments, {
               ...context.repo,
               issue_number: prNumber,
@@ -305,8 +310,15 @@ jobs:
             const latestReview = [...comments].reverse().find(comment =>
               String(comment.body || '').includes(reviewPrefix)
             )
+            const latestReviewBody = String(latestReview?.body || '')
+            const initialReviewMatch = latestReviewBody.match(
+              new RegExp(`<!-- gitkeepr-system-review:v1 head=${pr.head.sha} verdict=(pass|continue) -->`)
+            )
+            const initialReviewVerdict = initialReviewMatch?.[1] || ''
+            core.setOutput('prior_status', priorStatus)
+            core.setOutput('initial_review_verdict', initialReviewVerdict)
 
-            fs.writeFileSync(process.env.INITIAL_REVIEW_FILE, latestReview?.body || '')
+            fs.writeFileSync(process.env.INITIAL_REVIEW_FILE, latestReviewBody)
             fs.writeFileSync(process.env.TRIGGER_FEEDBACK_FILE, triggerFeedback)
             fs.writeFileSync(
               process.env.PR_DISCUSSION_FILE,
@@ -353,6 +365,8 @@ jobs:
           TRIGGER_AUTHOR: ${{ steps.context.outputs.trigger_author }}
           TRIGGER_REVIEW_STATE: ${{ steps.context.outputs.review_state }}
           TRIGGER_REVIEW_HAS_FEEDBACK: ${{ steps.context.outputs.review_has_feedback }}
+          PRIOR_STATUS: ${{ steps.context.outputs.prior_status }}
+          INITIAL_REVIEW_VERDICT: ${{ steps.context.outputs.initial_review_verdict }}
           HEAD_REF: ${{ steps.context.outputs.head_ref }}
           BASE_REF: gitkeepr-base
           TRIGGER_FEEDBACK_FILE: ${{ runner.temp }}/gitkeepr-trigger-feedback.md
@@ -414,6 +428,10 @@ jobs:
             echo "=== GitKeepr cycle $cycle/$GITKEEPR_MAX_CYCLES ==="
             start_head="$(git rev-parse HEAD)"
             previous_review="$(cat "$review_context" 2>/dev/null || true)"
+            build_had_continue_review=false
+            if grep -Fq "<!-- gitkeepr-system-review:v1 head=${start_head} verdict=continue -->" "$review_context" 2>/dev/null; then
+              build_had_continue_review=true
+            fi
 
             build_prompt="$(cat <<EOF
           You are the Build agent for pull request #${PR_NUMBER}. Work directly in the checked-out repository.
@@ -479,8 +497,17 @@ jobs:
             fi
 
             if [[ "$changed" == "false" && "$TRIGGER_KIND" == "comment" && "$cycle" -eq 1 ]]; then
+              final_status="gitkeepr:waiting-human"
+              if [[ "$INITIAL_REVIEW_VERDICT" == "continue" ]]; then
+                final_status="gitkeepr:blocked"
+              elif [[ "$INITIAL_REVIEW_VERDICT" == "pass" ]]; then
+                final_status="gitkeepr:waiting-human"
+              elif [[ "$PRIOR_STATUS" == "gitkeepr:blocked" || "$PRIOR_STATUS" == "gitkeepr:waiting-human" ]]; then
+                final_status="$PRIOR_STATUS"
+              fi
+              printf 'final_status=%s\n' "$final_status" >> "$GITHUB_OUTPUT"
               cp "$build_text_file" "$DIRECT_REPLY_FILE"
-              echo "Trusted PR comment handled without repository changes; skipping Review."
+              echo "Trusted PR comment handled without repository changes; preserving final status as $final_status and skipping Review."
               exit 0
             fi
 
@@ -571,8 +598,8 @@ jobs:
               exit 0
             fi
 
-            if [[ "$changed" == "false" || "$current_head" == "$start_head" ]]; then
-              block "Review returned CONTINUE without repository progress in cycle $cycle; stopping to avoid an infinite loop."
+            if [[ "$build_had_continue_review" == "true" && "$current_head" == "$start_head" ]]; then
+              block "Build made no repository progress after receiving CONTINUE review for the current HEAD in cycle $cycle; stopping to avoid an infinite loop."
             fi
 
             review_context="$review_file"
@@ -593,6 +620,7 @@ jobs:
           TRIGGER_KEY: ${{ steps.context.outputs.trigger_key }}
           ORIGINAL_HEAD_SHA: ${{ steps.context.outputs.head_sha }}
           LOOP_OUTCOME: ${{ steps.loop.outcome }}
+          REQUESTED_FINAL_STATUS: ${{ steps.loop.outputs.final_status }}
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
@@ -606,7 +634,11 @@ jobs:
               'gitkeepr:blocked',
             ]
             const succeeded = process.env.LOOP_OUTCOME === 'success'
-            const target = succeeded ? 'gitkeepr:waiting-human' : 'gitkeepr:blocked'
+            const requestedFinalStatus = String(process.env.REQUESTED_FINAL_STATUS || '')
+            const allowedFinalStatuses = new Set(['gitkeepr:waiting-human', 'gitkeepr:blocked'])
+            const target = succeeded && allowedFinalStatuses.has(requestedFinalStatus)
+              ? requestedFinalStatus
+              : succeeded ? 'gitkeepr:waiting-human' : 'gitkeepr:blocked'
             const triggerKey = process.env.TRIGGER_KEY || ''
             const triggerMarker = triggerKey
               ? `<!-- gitkeepr-trigger:v1 key=${triggerKey} -->`
