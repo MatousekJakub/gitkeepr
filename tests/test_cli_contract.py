@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Focused static tests for GitKeepr CLI safety and V1 lifecycle contracts."""
 from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -150,6 +152,28 @@ class CliContractTests(unittest.TestCase):
         self.assertNotIn('rm -rf "$home/runners"', init)
 
     def test_runner_mcp_tooling_is_installed_and_merged_into_opencode_config(self):
+        config_path = self.function_body("runner_opencode_config_path", "configure_runner_mcp_tools")
+        self.assertIn('[[ -f "$home/.config/opencode/opencode.jsonc" ]]', config_path)
+        self.assertIn('opencode.jsonc', config_path)
+        self.assertIn('opencode.json', config_path)
+
+        function = "runner_opencode_config_path() {" + config_path
+        with tempfile.TemporaryDirectory() as home:
+            config_dir = Path(home) / ".config/opencode"
+            config_dir.mkdir(parents=True)
+
+            def selected_config():
+                return subprocess.check_output(
+                    ["bash", "-c", function + '\nrunner_opencode_config_path "$1"', "bash", home],
+                    text=True,
+                ).strip()
+
+            self.assertEqual(selected_config(), str(config_dir / "opencode.json"))
+            (config_dir / "opencode.jsonc").touch()
+            self.assertEqual(selected_config(), str(config_dir / "opencode.jsonc"))
+            (config_dir / "opencode.json").touch()
+            self.assertEqual(selected_config(), str(config_dir / "opencode.jsonc"))
+
         helper = self.function_body("configure_runner_mcp_tools", "server_doctor")
         self.assertIn("chrome-devtools-mcp@latest", helper)
         self.assertIn("@upstash/context7-mcp@latest", helper)

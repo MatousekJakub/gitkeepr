@@ -589,6 +589,15 @@ runner_chromium_path() {
     tail -n1
 }
 
+runner_opencode_config_path() {
+  local home="$1"
+  if [[ -f "$home/.config/opencode/opencode.jsonc" ]]; then
+    printf '%s/.config/opencode/opencode.jsonc' "$home"
+  else
+    printf '%s/.config/opencode/opencode.json' "$home"
+  fi
+}
+
 configure_runner_mcp_tools() {
   local opencode_path="$1" home="" npm_prefix="" browser_cache="" chromium=""
   local config="" tmp=""
@@ -597,7 +606,7 @@ configure_runner_mcp_tools() {
   [[ -n "$home" ]] || die "Could not resolve home directory for $RUNNER_USER."
   npm_prefix="$home/.local"
   browser_cache="$home/.cache/ms-playwright"
-  config="$home/.config/opencode/opencode.json"
+  config="$(runner_opencode_config_path "$home")"
 
   say "Installing/updating GitKeepr MCP servers for $RUNNER_USER..."
   as_runner npm install --global --prefix "$npm_prefix" \
