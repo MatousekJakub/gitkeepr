@@ -12,7 +12,7 @@ bash -n bin/gitkeepr
 bash -n install.sh
 ```
 
-The tests protect the high-value contracts: project-init mutation boundaries, server/runner lifecycle structure, trust-before-checkout, same-repository execution, configured Build/Review models, exact-HEAD Review verdicts, max-cycle/no-progress behavior, success-only trigger markers, public self-gate behavior, and full-SHA third-party Action pinning.
+The tests protect the high-value contracts: project-init mutation boundaries, server/runner lifecycle structure, trust-before-checkout, same-repository execution, configured Build/Review models, exact-HEAD Review verdicts, max-cycle/no-progress behavior, success-only trigger markers, public self-gate behavior, release-version consistency and prepare-release dry runs, and full-SHA third-party Action pinning.
 
 Ordinary repository CI remains independent of the AI Review verdict. GitKeepr V1 deliberately does not impose a universal deterministic verification command on target projects; Build chooses relevant tests for the current repository/task.
 

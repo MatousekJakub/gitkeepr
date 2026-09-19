@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CORE = (ROOT / ".github/workflows/pr-loop.yml").read_text()
 CALLER = (ROOT / "templates/gitkeepr.yml").read_text()
 SELF_GATE = (ROOT / ".github/workflows/self-gate.yml").read_text()
+VERSION = (ROOT / "VERSION").read_text().strip()
 
 
 class WorkflowContractTests(unittest.TestCase):
@@ -62,9 +63,9 @@ class WorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("triggerKey = `manual:${context.runId}`", manual)
 
-    def test_standard_caller_is_pinned_to_v010_release(self):
+    def test_standard_caller_is_pinned_to_current_release(self):
         self.assertIn(
-            "uses: MatousekJakub/gitkeepr/.github/workflows/pr-loop.yml@v0.1.0",
+            f"uses: MatousekJakub/gitkeepr/.github/workflows/pr-loop.yml@v{VERSION}",
             CALLER,
         )
         self.assertNotIn("pr-loop.yml@main", CALLER)
