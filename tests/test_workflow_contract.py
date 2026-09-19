@@ -162,7 +162,7 @@ class WorkflowContractTests(unittest.TestCase):
     def test_review_comparison_ignores_only_trailing_formatting(self):
         loop = CORE.split("- name: Run Build Review loop", 1)[1]
         match = re.search(
-            r'''python3 -c '(?P<script>[^']+)' "\\$review_context" "\\$review_file"''',
+            r'''python3 -c '(?P<script>[^']+)' "\$review_context" "\$review_file"''',
             loop,
         )
         self.assertIsNotNone(match)
@@ -171,8 +171,8 @@ class WorkflowContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             previous = Path(directory) / "previous.md"
             current = Path(directory) / "current.md"
-            previous.write_text("review body\\n")
-            current.write_text("review body\\n\\n")
+            previous.write_text("review body\n")
+            current.write_text("review body\n\n")
 
             result = subprocess.run(
                 [sys.executable, "-c", comparison_script, str(previous), str(current)],
@@ -182,7 +182,7 @@ class WorkflowContractTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
-            current.write_text("changed review body\\n")
+            current.write_text("changed review body\n")
             result = subprocess.run(
                 [sys.executable, "-c", comparison_script, str(previous), str(current)],
                 text=True,
@@ -195,7 +195,7 @@ class WorkflowContractTests(unittest.TestCase):
         step = CORE.split("      - name: Run Build Review loop", 1)[1].split(
             "      - name: Publish result and finalize status", 1
         )[0]
-        script = step.split("        run: |\\n", 1)[1]
+        script = step.split("        run: |\n", 1)[1]
         script = textwrap.dedent(script)
 
         result = subprocess.run(
