@@ -10,7 +10,7 @@ Start from an up-to-date same-repository branch created from `main`, then run:
 python3 scripts/prepare-release.py 0.1.1
 ```
 
-The script validates the current version wiring before changing anything. It updates only the release-coupled files:
+The script validates the current version wiring before changing anything. It prepares the complete update set before writing and rolls back already-written files if a later write fails. It updates only the release-coupled files:
 
 - `VERSION`;
 - `bin/gitkeepr`;
