@@ -102,7 +102,7 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("Ubuntu/Debian", doctor)
         self.assertIn("systemd", doctor)
         self.assertIn("x86_64|amd64|aarch64|arm64", doctor)
-        for command in ("curl", "git", "jq", "tar", "gh", "python3", "openssl", "xz", "node", "npm", "npx"):
+        for command in ("curl", "git", "jq", "tar", "unzip", "gh", "python3", "openssl", "xz"):
             self.assertIn(command, doctor)
         self.assertIn("GITKEEPR_APP_CLIENT_ID", doctor)
         self.assertIn("GITKEEPR_APP_PRIVATE_KEY_PATH", doctor)
@@ -110,8 +110,8 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("600", doctor)
         self.assertIn("runner_cache_path", doctor)
         self.assertIn('"$opencode_path" models', doctor)
-        self.assertIn("node_runtime_ok", doctor)
-        self.assertIn("runner_chromium_path", doctor)
+        self.assertIn("runner_node_runtime_ok", doctor)
+        self.assertIn("runner_chrome_path", doctor)
         self.assertIn("chrome-devtools-mcp", doctor)
         self.assertIn("context7-mcp", doctor)
         self.assertIn("mcp list", doctor)
@@ -136,7 +136,7 @@ class CliContractTests(unittest.TestCase):
     def test_server_init_bootstraps_host_without_touching_existing_runners(self):
         init = self.function_body("server_init", "runner_add")
         self.assertIn("apt-get install -y", init)
-        for package in ("curl", "git", "jq", "tar", "xz-utils", "ca-certificates", "gh", "python3", "openssl"):
+        for package in ("curl", "git", "jq", "tar", "unzip", "xz-utils", "ca-certificates", "gh", "python3", "openssl"):
             self.assertIn(package, init)
         self.assertIn('useradd --create-home --shell /bin/bash "$RUNNER_USER"', init)
         self.assertIn("gh auth login", init)
@@ -177,8 +177,9 @@ class CliContractTests(unittest.TestCase):
         helper = self.function_body("configure_runner_mcp_tools", "server_doctor")
         self.assertIn("chrome-devtools-mcp@latest", helper)
         self.assertIn("@upstash/context7-mcp@latest", helper)
-        self.assertIn("playwright@latest install --with-deps --no-shell chromium", helper)
-        self.assertIn("PLAYWRIGHT_BROWSERS_PATH", helper)
+        self.assertIn("runner_chrome_path", helper)
+        self.assertIn("install_runner_chrome", helper)
+        self.assertNotIn("playwright", helper.lower())
         self.assertIn('.mcp["chrome-devtools"]', helper)
         self.assertIn(".mcp.context7", helper)
         self.assertIn("--headless", helper)
@@ -187,6 +188,11 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("--chrome-arg=--lang=cs-CZ", helper)
         self.assertIn('jsonc_to_json "$tmp"', helper)
         self.assertIn('"$opencode_path" mcp list', helper)
+
+        chrome = self.function_body("install_runner_chrome", "runner_opencode_config_path")
+        self.assertIn("chrome-for-testing/last-known-good-versions-with-downloads.json", chrome)
+        self.assertIn("chrome.zip", chrome)
+        self.assertIn("unzip", chrome)
 
     def test_jsonc_config_normalizer_accepts_comments_and_trailing_commas(self):
         normalizer = self.function_body("jsonc_to_json", "configure_runner_mcp_tools")

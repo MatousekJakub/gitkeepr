@@ -75,9 +75,9 @@ as_runner() {
   home="$(runner_home)"
   [[ -n "$home" ]] || die "Could not resolve home directory for $RUNNER_USER."
   if [[ "$(id -u)" -eq 0 ]]; then
-    runuser -u "$RUNNER_USER" -- env HOME="$home" "$@"
+    runuser -u "$RUNNER_USER" -- env HOME="$home" PATH="/usr/local/bin:/usr/bin:/bin:$home/.local/bin" "$@"
   else
-    sudo -H -u "$RUNNER_USER" env HOME="$home" "$@"
+    sudo -H -u "$RUNNER_USER" env HOME="$home" PATH="/usr/local/bin:/usr/bin:/bin:$home/.local/bin" "$@"
   fi
 }
 
@@ -503,34 +503,28 @@ project_doctor() {
   return "$failed"
 }
 
-node_runtime_ok() {
-  local version="" major="" minor=""
-  command -v node >/dev/null 2>&1 || return 1
-  command -v npm >/dev/null 2>&1 || return 1
-  command -v npx >/dev/null 2>&1 || return 1
-
-  version="$(node -p 'process.versions.node' 2>/dev/null || true)"
-  IFS='.' read -r major minor _ <<< "$version"
-  [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ ]] || return 1
-
-  if (( major >= 23 )); then
-    return 0
-  fi
-  if (( major == 22 && minor >= 12 )); then
-    return 0
-  fi
-  if (( major == 20 && minor >= 19 )); then
-    return 0
-  fi
-  return 1
+runner_node_runtime_ok() {
+  id "$RUNNER_USER" >/dev/null 2>&1 || return 1
+  as_runner env PATH="/usr/local/bin:/usr/bin:/bin" bash -c '
+    command -v node >/dev/null 2>&1 || exit 1
+    command -v npm >/dev/null 2>&1 || exit 1
+    command -v npx >/dev/null 2>&1 || exit 1
+    version="$(node -p "process.versions.node" 2>/dev/null || true)"
+    IFS="." read -r major minor _ <<< "$version"
+    [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ ]] || exit 1
+    (( major >= 23 )) && exit 0
+    (( major == 22 && minor >= 12 )) && exit 0
+    (( major == 20 && minor >= 19 )) && exit 0
+    exit 1
+  '
 }
 
 install_node_runtime() {
   local node_arch="" release_json="" node_version="" tarball="" tmpdir=""
   local expected_sha="" actual_sha="" install_dir="" tool=""
 
-  if node_runtime_ok; then
-    say "Node.js runtime is compatible: $(node --version)"
+  if runner_node_runtime_ok; then
+    say "Node.js runtime is compatible for $RUNNER_USER: $(as_runner env PATH="/usr/local/bin:/usr/bin:/bin" node --version)"
     return 0
   fi
 
@@ -572,21 +566,56 @@ install_node_runtime() {
   done
   rm -rf "$tmpdir"
 
-  node_runtime_ok || die "Node.js installation completed but the runtime is not compatible with GitKeepr MCP tooling."
-  say "Installed Node.js runtime: $(node --version)"
+  runner_node_runtime_ok || die "Node.js installation completed but the runtime is not compatible with GitKeepr MCP tooling."
+  say "Installed Node.js runtime for $RUNNER_USER: $(as_runner env PATH="/usr/local/bin:/usr/bin:/bin" node --version)"
 }
 
-runner_chromium_path() {
-  local home=""
+runner_chrome_path() {
+  local home="" path=""
   home="$(runner_home)"
   [[ -n "$home" ]] || return 1
-  find "$home/.cache/ms-playwright" \
+  for path in /usr/bin/google-chrome /usr/bin/google-chrome-stable; do
+    if [[ -x "$path" ]]; then
+      printf '%s\n' "$path"
+      return 0
+    fi
+  done
+  find "$home/.cache/gitkeepr/chrome-for-testing" \
     -type f \
-    -path '*/chromium-*/chrome-linux*/chrome' \
+    -path '*/chrome-linux*/chrome' \
     -perm -u+x \
     2>/dev/null |
     sort -V |
     tail -n1
+}
+
+chrome_for_testing_platform() {
+  case "$(uname -m)" in
+    x86_64|amd64) printf '%s' "linux64" ;;
+    aarch64|arm64) printf '%s' "linux-arm64" ;;
+    *) return 1 ;;
+  esac
+}
+
+install_runner_chrome() {
+  local home="" browser_cache="" platform="" release_json="" version="" url="" tmpdir=""
+
+  home="$(runner_home)"
+  [[ -n "$home" ]] || die "Could not resolve home directory for $RUNNER_USER."
+  browser_cache="$home/.cache/gitkeepr/chrome-for-testing"
+  platform="$(chrome_for_testing_platform)" || die "Unsupported architecture for Chrome for Testing: $(uname -m)."
+  release_json="$(curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json)"
+  version="$(printf '%s' "$release_json" | jq -r '.channels.Stable.version // empty')"
+  url="$(printf '%s' "$release_json" | jq -r --arg platform "$platform" '.channels.Stable.downloads.chrome[] | select(.platform == $platform) | .url // empty')"
+  [[ -n "$version" && -n "$url" ]] || die "Could not resolve a stable Chrome for Testing download for $platform."
+
+  say "Installing Chrome for Testing $version for $RUNNER_USER..."
+  tmpdir="$(mktemp -d)"
+  curl -fsSL "$url" -o "$tmpdir/chrome.zip"
+  as_root install -d -o "$RUNNER_USER" -g "$RUNNER_USER" -m 0755 "$browser_cache"
+  as_root unzip -q -o "$tmpdir/chrome.zip" -d "$browser_cache"
+  as_root chown -R "$RUNNER_USER:$RUNNER_USER" "$browser_cache"
+  rm -rf "$tmpdir"
 }
 
 runner_opencode_config_path() {
@@ -688,13 +717,12 @@ PY
 }
 
 configure_runner_mcp_tools() {
-  local opencode_path="$1" home="" npm_prefix="" browser_cache="" chromium=""
+  local opencode_path="$1" home="" npm_prefix="" chrome=""
   local config="" tmp="" normalized=""
 
   home="$(runner_home)"
   [[ -n "$home" ]] || die "Could not resolve home directory for $RUNNER_USER."
   npm_prefix="$home/.local"
-  browser_cache="$home/.cache/ms-playwright"
   config="$(runner_opencode_config_path "$home")"
 
   say "Installing/updating GitKeepr MCP servers for $RUNNER_USER..."
@@ -702,18 +730,14 @@ configure_runner_mcp_tools() {
     chrome-devtools-mcp@latest \
     @upstash/context7-mcp@latest
 
-  chromium="$(runner_chromium_path || true)"
-  if [[ -z "$chromium" ]]; then
-    say "Installing Chromium and its Linux dependencies for $RUNNER_USER..."
-    as_root install -d -o "$RUNNER_USER" -g "$RUNNER_USER" -m 0755 "$browser_cache"
-    as_root env PLAYWRIGHT_BROWSERS_PATH="$browser_cache" \
-      npx -y playwright@latest install --with-deps --no-shell chromium
-    as_root chown -R "$RUNNER_USER:$RUNNER_USER" "$browser_cache"
-    chromium="$(runner_chromium_path || true)"
+  chrome="$(runner_chrome_path || true)"
+  if [[ -z "$chrome" ]]; then
+    install_runner_chrome
+    chrome="$(runner_chrome_path || true)"
   else
-    say "Runner Chromium already exists: $chromium"
+    say "Runner Chrome already exists: $chrome"
   fi
-  [[ -n "$chromium" && -x "$chromium" ]] || die "Chromium installation completed but no executable could be found for $RUNNER_USER."
+  [[ -n "$chrome" && -x "$chrome" ]] || die "Chrome installation completed but no executable could be found for $RUNNER_USER."
 
   tmp="$(mktemp)"
   if as_runner test -f "$config"; then
@@ -729,7 +753,7 @@ configure_runner_mcp_tools() {
   fi
 
   if ! jq \
-    --arg chrome "$chromium" \
+    --arg chrome "$chrome" \
     --arg chrome_mcp "$npm_prefix/bin/chrome-devtools-mcp" \
     --arg context7 "$npm_prefix/bin/context7-mcp" \
     '
@@ -766,7 +790,7 @@ configure_runner_mcp_tools() {
 
 server_doctor() {
   local failed=0 os_id="" os_like="" arch config_client="" config_key="" config_contents="" mode="" owner=""
-  local opencode_path="" cache_path="" home="" service_count="" free_kb="" chromium="" mcp_status=""
+  local opencode_path="" cache_path="" home="" service_count="" free_kb="" chrome="" mcp_status=""
 
   if [[ -r /etc/os-release ]]; then
     # shellcheck disable=SC1091
@@ -795,7 +819,7 @@ server_doctor() {
   esac
 
   local cmd
-  for cmd in curl git jq tar gh python3 openssl xz node npm npx; do
+  for cmd in curl git jq tar unzip gh python3 openssl xz; do
     if command -v "$cmd" >/dev/null 2>&1; then
       say "OK    $cmd available"
     else
@@ -804,10 +828,10 @@ server_doctor() {
     fi
   done
 
-  if node_runtime_ok; then
-    say "OK    Node.js runtime is compatible: $(node --version)"
+  if runner_node_runtime_ok; then
+    say "OK    Node.js runtime is compatible for $RUNNER_USER: $(as_runner env PATH="/usr/local/bin:/usr/bin:/bin" node --version)"
   else
-    say "FAIL  Node.js runtime is missing or too old for Chrome DevTools MCP; run 'gitkeepr server init'"
+    say "FAIL  Node.js runtime is missing or too old for Chrome DevTools MCP for $RUNNER_USER; run 'gitkeepr server init'"
     failed=1
   fi
 
@@ -844,11 +868,11 @@ server_doctor() {
         failed=1
       fi
 
-      chromium="$(runner_chromium_path || true)"
-      if [[ -n "$chromium" && -x "$chromium" ]]; then
-        say "OK    Chromium available to $RUNNER_USER: $chromium"
+      chrome="$(runner_chrome_path || true)"
+      if [[ -n "$chrome" && -x "$chrome" ]]; then
+        say "OK    Chrome for Testing available to $RUNNER_USER: $chrome"
       else
-        say "FAIL  Chromium missing for $RUNNER_USER; run 'gitkeepr server init'"
+        say "FAIL  Chrome for Testing missing for $RUNNER_USER; run 'gitkeepr server init'"
         failed=1
       fi
 
@@ -994,7 +1018,11 @@ server_init() {
 
   say "Installing/confirming server prerequisites..."
   as_root apt-get update
-  as_root apt-get install -y curl git jq tar xz-utils ca-certificates gh python3 openssl
+  as_root apt-get install -y curl git jq tar unzip xz-utils ca-certificates gh python3 openssl \
+    fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 libcairo2 libcups2 \
+    libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 \
+    libpango-1.0-0 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxdamage1 \
+    libxext6 libxfixes3 libxkbcommon0 libxrandr2 libxshmfence1 xdg-utils
 
   if ! id "$RUNNER_USER" >/dev/null 2>&1; then
     say "Creating dedicated $RUNNER_USER user..."
