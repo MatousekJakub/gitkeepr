@@ -30,15 +30,24 @@ Complete the generated release notes, run the normal test suite and shell syntax
 
 ## Publish after merge
 
-After the release-preparation PR is merged, update the local `main` checkout and record its exact commit:
+After the release-preparation PR is merged, update the local `main` checkout and verify that it exactly matches the current remote `main`:
 
 ```bash
 git switch main
-git pull --ff-only origin main
-git rev-parse HEAD
+git fetch origin main
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  printf '%s\n' 'Refusing to release: the worktree is not clean.' >&2
+  exit 1
+fi
+
+if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
+  printf '%s\n' 'Refusing to release: HEAD does not match origin/main.' >&2
+  exit 1
+fi
 ```
 
-Then publish that exact commit, using the prepared files as release assets:
+Only after those checks pass, read the version, record that exact commit, and publish it using the prepared files as release assets:
 
 ```bash
 VERSION="$(cat VERSION)"
