@@ -603,15 +603,7 @@ jobs:
             fi
 
             review_unchanged=false
-            if [[ "$build_had_continue_review" == "true" ]] && python3 - "$review_context" "$review_file" <<'PY'
-              import pathlib
-              import sys
-
-              previous = pathlib.Path(sys.argv[1]).read_text().strip()
-              current = pathlib.Path(sys.argv[2]).read_text().strip()
-              raise SystemExit(0 if previous == current else 1)
-            PY
-            then
+            if [[ "$build_had_continue_review" == "true" ]] && python3 -c 'import pathlib, sys; previous = pathlib.Path(sys.argv[1]).read_text().strip(); current = pathlib.Path(sys.argv[2]).read_text().strip(); raise SystemExit(0 if previous == current else 1)' "$review_context" "$review_file"; then
               review_unchanged=true
             fi
             if [[ "$build_had_continue_review" == "true" && "$current_head" == "$start_head" && "$review_unchanged" == "true" ]]; then
