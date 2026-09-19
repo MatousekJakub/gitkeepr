@@ -139,7 +139,7 @@ class WorkflowContractTests(unittest.TestCase):
             loop,
         )
         self.assertIn(
-            'if [[ "$build_had_continue_review" == "true" ]] && python3 - "$review_context" "$review_file" <<\'PY\'',
+            'python3 -c \'import pathlib, sys; previous = pathlib.Path(sys.argv[1]).read_text().strip(); current = pathlib.Path(sys.argv[2]).read_text().strip(); raise SystemExit(0 if previous == current else 1)\' "$review_context" "$review_file"',
             loop,
         )
         self.assertIn("read_text().strip()", loop)
@@ -162,12 +162,11 @@ class WorkflowContractTests(unittest.TestCase):
     def test_review_comparison_ignores_only_trailing_formatting(self):
         loop = CORE.split("- name: Run Build Review loop", 1)[1]
         match = re.search(
-            r'''python3 - "\$review_context" "\$review_file" <<'PY'\n(?P<script>.*?)\n\s+PY''',
+            r'''python3 -c '(?P<script>[^']+)' "\$review_context" "\$review_file"''',
             loop,
-            re.DOTALL,
         )
         self.assertIsNotNone(match)
-        comparison_script = textwrap.dedent(match.group("script"))
+        comparison_script = match.group("script")
 
         with tempfile.TemporaryDirectory() as directory:
             previous = Path(directory) / "previous.md"
@@ -176,8 +175,7 @@ class WorkflowContractTests(unittest.TestCase):
             current.write_text("review body\n\n")
 
             result = subprocess.run(
-                [sys.executable, "-", str(previous), str(current)],
-                input=comparison_script,
+                [sys.executable, "-c", comparison_script, str(previous), str(current)],
                 text=True,
                 capture_output=True,
                 check=False,
@@ -186,13 +184,28 @@ class WorkflowContractTests(unittest.TestCase):
 
             current.write_text("changed review body\n")
             result = subprocess.run(
-                [sys.executable, "-", str(previous), str(current)],
-                input=comparison_script,
+                [sys.executable, "-c", comparison_script, str(previous), str(current)],
                 text=True,
                 capture_output=True,
                 check=False,
             )
             self.assertNotEqual(result.returncode, 0)
+
+    def test_build_review_run_block_is_valid_bash(self):
+        step = CORE.split("      - name: Run Build Review loop", 1)[1].split(
+            "      - name: Publish result and finalize status", 1
+        )[0]
+        script = step.split("        run: |\n", 1)[1]
+        script = textwrap.dedent(script)
+
+        result = subprocess.run(
+            ["bash", "-n"],
+            input=script,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_core_does_not_impose_a_generic_deterministic_test_command(self):
         self.assertNotIn("python3 -m unittest discover -s tests -v", CORE)
