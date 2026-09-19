@@ -65,6 +65,7 @@ Start with:
 
 - `docs/goal.md` — product scope and non-goals;
 - `docs/architecture.md` — components and Build/Review loop;
+- `docs/development.md` — self-development PR workflow and release isolation;
 - `docs/security.md` — trust boundaries, App permissions, and public self-gate;
 - `docs/setup.md` — installation and repository setup;
 - `docs/operations.md` — recovery and operational semantics;

@@ -110,6 +110,15 @@ External-review marker format:
 
 The marker is audit/deduplication metadata for helpers; it is not a security credential.
 
-## Continuous bootstrap development
+## GitKeepr development workflow
 
-During the temporary bootstrap phase, scheduled ChatGPT development may commit directly to `main`. This is intentionally simpler than introducing a long-lived automation PR. It does not change the product rule that target repositories use PR-based Build/Review loops.
+After the `v0.1.0` release, normal GitKeepr development uses GitKeepr's own public self-development path.
+
+- Changes are prepared on same-repository branches and opened as pull requests; direct pushes to `main` are not the normal development path.
+- The assistant normally prepares the branch changes and opens the pull request. Human review/merge and release decisions remain explicit.
+- Each same-repository PR must pass through the GitHub-hosted `self-gate.yml` before the candidate `pr-loop.yml` may run on the persistent self-hosted runner.
+- GitKeepr Build/Review may correct blocking findings on the PR branch before returning `PASS`.
+- Published release tags remain immutable. Development on `main` does not change repositories pinned to an existing release.
+- A direct `main` repair is reserved for an exceptional recovery case where the self-development path itself is broken and cannot be used to restore service.
+
+The earlier scheduled direct-to-`main` bootstrap process is historical only; see `docs/automation/continuous-development.md`.
