@@ -185,7 +185,40 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("--isolated", helper)
         self.assertIn("--experimental-vision", helper)
         self.assertIn("--chrome-arg=--lang=cs-CZ", helper)
+        self.assertIn('jsonc_to_json "$tmp"', helper)
         self.assertIn('"$opencode_path" mcp list', helper)
+
+    def test_jsonc_config_normalizer_accepts_comments_and_trailing_commas(self):
+        normalizer = self.function_body("jsonc_to_json", "configure_runner_mcp_tools")
+        config = (
+            "{\n"
+            "  // Keep the user's schema and comments parseable.\n"
+            '  "$schema": "https://opencode.ai/config.json",\n'
+            '  "description": "text with // characters and /* markers */,",\n'
+            "  \"mcp\": {\n"
+            '    "existing": {"type": "local",},\n'
+            "  },\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "opencode.jsonc"
+            path.write_text(config)
+            script = "jsonc_to_json() {" + normalizer + '\njsonc_to_json "$1"'
+            result = subprocess.run(
+                ["bash", "-c", script, "bash", str(path)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            __import__("json").loads(result.stdout),
+            {
+                "$schema": "https://opencode.ai/config.json",
+                "description": "text with // characters and /* markers */,",
+                "mcp": {"existing": {"type": "local"}},
+            },
+        )
 
     def test_app_verification_uses_server_client_id_and_private_key(self):
         jwt = self.function_body("github_app_jwt", "verify_app_access")
