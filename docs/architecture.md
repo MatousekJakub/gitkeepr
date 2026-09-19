@@ -6,11 +6,13 @@
 
 ### Target repository
 
-`gitkeepr init` creates exactly one versioned file:
+For a standard private target repository, `gitkeepr init` creates exactly one versioned file:
 
 - `.github/workflows/gitkeepr.yml`
 
 It also configures repository variables. It does not create `.ai/plan.md`, `AGENTS.md`, a `.gitkeepr/` directory, or any other project files.
+
+The public upstream GitKeepr repository is a narrow self-development exception: `gitkeepr init` configures variables but creates no standard caller, because `.github/workflows/self-gate.yml` and `.github/workflows/pr-loop.yml` already define its gated execution path.
 
 The target caller listens to:
 

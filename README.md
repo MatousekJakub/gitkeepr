@@ -6,17 +6,21 @@ GitHub PRs are the control plane. Build edits and tests the PR branch, the workf
 
 ## V1 status
 
-The documented V1 implementation is feature-complete in the repository and its contract CI is green. The remaining release work is live validation on the real VPS and end-to-end PR flows; see `docs/known-issues.md` and `docs/testing.md`.
+GitKeepr V1 is operationally validated for the tested Ubuntu/ARM64 server and repository workflows. Contract CI is green, and live smoke testing covered server/bootstrap lifecycle, private-repository runner lifecycle, real multi-cycle Build ↔ Review PR flows, no-code replies, trigger idempotence/suppression, blocked/retry behavior, public self-development, and fork isolation.
 
 Standard V1 target repositories are **private and trusted**. GitKeepr itself is public and uses a separate GitHub-hosted self-development gate so fork code never reaches the persistent runner.
 
+See `docs/testing.md` for the validated smoke matrix and `docs/known-issues.md` for the current validation status.
+
 ## Install
+
+Install or update the CLI:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MatousekJakub/gitkeepr/main/install.sh | bash
 ```
 
-Then prepare the VPS once:
+Prepare the Ubuntu/Debian VPS once:
 
 ```bash
 gitkeepr server init
@@ -28,10 +32,41 @@ Inside a private target repository:
 gitkeepr init
 ```
 
-On the VPS:
+Commit the generated `.github/workflows/gitkeepr.yml` after inspection, then on the VPS:
 
 ```bash
 gitkeepr runner add owner/repo
 ```
 
-Start with `docs/goal.md`, `docs/architecture.md`, `docs/decisions.md`, and `docs/setup.md`.
+Verify both sides:
+
+```bash
+gitkeepr doctor
+gitkeepr server doctor
+```
+
+Useful lifecycle commands:
+
+```bash
+gitkeepr runner add owner/repo
+gitkeepr runner remove owner/repo
+gitkeepr version
+```
+
+`runner remove` removes only the runner/service/directory; repository variables, secrets, and workflow files are intentionally retained.
+
+## Public self-development
+
+The public `MatousekJakub/gitkeepr` repository is the only V1 public persistent-runner exception. Its `gitkeepr init` path configures variables but does **not** create the standard caller. Public PR events first pass through `.github/workflows/self-gate.yml` on a GitHub-hosted runner; only same-repository PRs may dispatch the candidate `pr-loop.yml` to the persistent runner. Fork PRs are ignored by GitKeepr AI automation.
+
+## Documentation
+
+Start with:
+
+- `docs/goal.md` — product scope and non-goals;
+- `docs/architecture.md` — components and Build/Review loop;
+- `docs/security.md` — trust boundaries, App permissions, and public self-gate;
+- `docs/setup.md` — installation and repository setup;
+- `docs/operations.md` — recovery and operational semantics;
+- `docs/testing.md` — automated contracts and live smoke checklist;
+- `docs/decisions.md` — approved product decisions.

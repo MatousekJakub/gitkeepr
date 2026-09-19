@@ -9,7 +9,7 @@
 - Public documentation, CLI output, prompts, generated system text, and repository content are English.
 - GitKeepr is intended to be public from the start.
 - Standard target-repository V1 support is private/trusted repositories only.
-- Target callers use GitKeepr `@main` in V1; release/version machinery can come later if needed.
+- Target callers use GitKeepr `@main` in V1. Tagged/versioned distribution remains a separate release decision rather than a prerequisite for V1 operation.
 - The reusable core may remain monolithic indefinitely if that stays practical.
 
 ## CLI UX
@@ -20,7 +20,8 @@
 - `gitkeepr init` operates on the current local Git repository.
 - `gitkeepr init` never commits, pushes, stages, stashes, or resets.
 - A dirty working tree is allowed.
-- The only versioned project file created by `init` is `.github/workflows/gitkeepr.yml`.
+- For standard private target repositories, the only versioned project file created by `init` is `.github/workflows/gitkeepr.yml`.
+- The public upstream GitKeepr self-development exception configures variables but does not create the standard caller; it uses the committed `self-gate.yml` + `pr-loop.yml` path.
 - The current caller template is downloaded from GitKeepr `main` on every `init`.
 - If the target workflow exists and differs, show the diff and ask `Replace? [y/N]`.
 - Local missing `git`, `gh`, or `gh` authentication produces an error plus instructions; local init does not auto-install/login.

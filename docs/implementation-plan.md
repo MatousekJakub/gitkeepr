@@ -17,9 +17,11 @@ The planned implementation blocks are present:
 9. Focused CLI/workflow contract tests and shell syntax CI.
 10. Third-party GitHub Actions pinned to full commit SHAs.
 
-## Before declaring V1 operationally validated
+## Operational validation
 
-Do not invent another implementation phase. Execute the live smoke checklist in `docs/testing.md`, fix only observed defects, and keep `docs/known-issues.md` synchronized with those results.
+V1 live validation is complete for the tested Ubuntu/ARM64 server and repository workflows. The exercised matrix is recorded in `docs/testing.md`, with the current validation state in `docs/known-issues.md`.
+
+Future work should be driven by observed defects, operational needs, or explicit product decisions rather than by inventing another V1 implementation phase.
 
 ## Constraints that remain deliberate
 

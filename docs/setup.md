@@ -28,7 +28,9 @@ Create the App manually with repository permissions:
 
 Install it using **Only selected repositories**. Add each managed repository before initialization.
 
-## 4. Initialize a private project
+## 4. Initialize a project
+
+### Standard private target repository
 
 Inside its checkout:
 
@@ -36,9 +38,20 @@ Inside its checkout:
 gitkeepr init
 ```
 
-Standard V1 init rejects public repositories. It asks you to confirm App installation, configures the five model/loop variables, and downloads the current caller template. The only versioned file it creates/replaces is `.github/workflows/gitkeepr.yml`; it never stages, commits, pushes, stashes, or resets.
+Standard V1 target repositories are private and trusted. Init asks you to confirm App installation, configures the five model/loop variables, and downloads the current caller template. The only versioned file it creates/replaces is `.github/workflows/gitkeepr.yml`; it never stages, commits, pushes, stashes, or resets.
 
 Commit/push the caller yourself after inspection.
+
+### GitKeepr public self-development
+
+The public upstream GitKeepr repository is a narrow V1 exception. Running `gitkeepr init` inside `MatousekJakub/gitkeepr` configures the same model/loop variables but does **not** create `.github/workflows/gitkeepr.yml`.
+
+Self-development uses the existing:
+
+- `.github/workflows/self-gate.yml` on a GitHub-hosted runner;
+- `.github/workflows/pr-loop.yml` on the persistent runner only after the gate proves the PR is same-repository.
+
+Other public target repositories remain unsupported by the standard V1 persistent-runner setup.
 
 ## 5. Add the repository runner
 
