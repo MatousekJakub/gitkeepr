@@ -32,7 +32,7 @@ Inside a private target repository:
 gitkeepr init
 ```
 
-The generated caller is pinned to the CLI's release tag (for V1, `v0.1.0`), so future changes on `main` do not silently change managed repositories. Commit the generated `.github/workflows/gitkeepr.yml` after inspection, then on the VPS:
+The generated caller is pinned to the installed CLI's release tag, so future changes on `main` do not silently change managed repositories. Commit the generated `.github/workflows/gitkeepr.yml` after inspection, then on the VPS:
 
 ```bash
 gitkeepr runner add owner/repo
@@ -66,6 +66,7 @@ Start with:
 - `docs/goal.md` — product scope and non-goals;
 - `docs/architecture.md` — components and Build/Review loop;
 - `docs/development.md` — self-development PR workflow and release isolation;
+- `docs/releasing.md` — deterministic release preparation, publishing, and upgrade flow;
 - `docs/security.md` — trust boundaries, App permissions, and public self-gate;
 - `docs/setup.md` — installation and repository setup;
 - `docs/operations.md` — recovery and operational semantics;

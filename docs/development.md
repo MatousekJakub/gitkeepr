@@ -24,7 +24,7 @@ Changing `main` does not silently change existing installations:
 - an installed CLI reads its project template from its own release tag;
 - generated target callers pin the reusable workflow to that release tag.
 
-A later release is therefore an explicit promotion of tested `main` state. Managed repositories upgrade explicitly by installing the newer CLI and rerunning `gitkeepr init` to review the caller diff.
+A later release is therefore an explicit promotion of tested `main` state. Release preparation and publication are documented in `docs/releasing.md`. Managed repositories upgrade explicitly by installing the newer CLI and rerunning `gitkeepr init` to review the caller diff.
 
 ## Exceptional recovery
 

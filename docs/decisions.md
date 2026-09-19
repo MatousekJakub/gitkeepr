@@ -9,7 +9,8 @@
 - Public documentation, CLI output, prompts, generated system text, and repository content are English.
 - GitKeepr is intended to be public from the start.
 - Standard target-repository V1 support is private/trusted repositories only.
-- Published V1 distribution is release-based. The current stable release is `v0.1.0`, and standard target callers pin the reusable core to that release tag rather than `@main`.
+- Published distribution is release-based. Standard target callers pin the reusable core to the same release tag as the CLI that generated them rather than `@main`.
+- `VERSION` is the repository source of truth for release preparation. `scripts/prepare-release.py` synchronizes release-coupled files and creates release notes, but never commits, tags, or publishes.
 - The reusable core may remain monolithic indefinitely if that stays practical.
 
 ## CLI UX
