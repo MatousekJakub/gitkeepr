@@ -17,10 +17,12 @@ class CliContractTests(unittest.TestCase):
             self.assertNotIn(forbidden, init)
         self.assertIn("git status --short", init)
 
-    def test_project_init_rejects_public_standard_targets(self):
+    def test_project_init_rejects_public_standard_targets_but_allows_self_development(self):
         init = self.function_body("project_init", "project_doctor")
         self.assertIn('[[ "${visibility,,}" == "public" ]]', init)
+        self.assertIn('is_public_self_repo "$repo"', init)
         self.assertIn("does not support public target repositories", init)
+        self.assertIn("no standard caller file is created", init)
 
     def test_project_init_requires_app_confirmation(self):
         init = self.function_body("project_init", "project_doctor")
@@ -52,6 +54,12 @@ class CliContractTests(unittest.TestCase):
         self.assertIn('== "gitkeepr"', doctor)
         self.assertIn("registered and online", doctor)
         self.assertIn("project doctor does not have the private key", doctor)
+
+    def test_project_doctor_supports_public_self_development_workflows(self):
+        doctor = self.function_body("project_doctor", "server_doctor")
+        self.assertIn('is_public_self_repo "$repo"', doctor)
+        self.assertIn("Public upstream repository uses the GitKeepr self-development gate", doctor)
+        self.assertIn("self-gate.yml pr-loop.yml", doctor)
 
     def test_server_doctor_is_read_only(self):
         doctor = self.function_body("server_doctor", "server_init")
@@ -183,11 +191,20 @@ class CliContractTests(unittest.TestCase):
         self.assertNotIn("delete_file", remove)
 
     def test_public_runner_exception_is_only_upstream_self_dogfood(self):
+        helper = self.function_body("is_public_self_repo", "validate_target_repo")
+        self.assertIn('upstream="$(upstream_repo_from_raw_base || true)"', helper)
+        self.assertIn('"$repo" == "$upstream"', helper)
+        self.assertIn(".github/workflows/self-gate.yml", helper)
+        self.assertIn(".github/workflows/pr-loop.yml", helper)
+
         validate = self.function_body("validate_target_repo", "runner_dir_for")
-        self.assertIn('upstream="$(upstream_repo_from_raw_base || true)"', validate)
-        self.assertIn('"$repo" != "$upstream"', validate)
-        self.assertIn(".github/workflows/self-gate.yml", validate)
+        self.assertIn('is_public_self_repo "$repo"', validate)
         self.assertIn("does not support public target repositories", validate)
+
+    def test_public_self_runner_check_does_not_require_standard_caller(self):
+        check = self.function_body("warn_if_caller_missing", "remove_runner_installation")
+        self.assertIn('is_public_self_repo "$repo"', check)
+        self.assertIn("Public self-development workflows are visible", check)
 
 
 if __name__ == "__main__":

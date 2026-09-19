@@ -196,19 +196,25 @@ upstream_repo_from_raw_base() {
   printf '%s/%s' "${rest%%/*}" "$(printf '%s' "${rest#*/}" | cut -d/ -f1)"
 }
 
-validate_target_repo() {
+is_public_self_repo() {
   local repo="$1" visibility upstream=""
+  visibility="$(gh repo view "$repo" --json visibility -q .visibility 2>/dev/null || true)"
+  [[ "${visibility,,}" == "public" ]] || return 1
+  upstream="$(upstream_repo_from_raw_base || true)"
+  [[ -n "$upstream" && "$repo" == "$upstream" ]] || return 1
+  gh api "repos/$repo/contents/.github/workflows/self-gate.yml" >/dev/null 2>&1 || return 1
+  gh api "repos/$repo/contents/.github/workflows/pr-loop.yml" >/dev/null 2>&1 || return 1
+}
+
+validate_target_repo() {
+  local repo="$1" visibility
   [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "Repository must be in OWNER/REPO form."
   gh repo view "$repo" >/dev/null 2>&1 || die "Repository $repo is not accessible with the admin gh login."
 
   visibility="$(gh repo view "$repo" --json visibility -q .visibility)"
   if [[ "${visibility,,}" == "public" ]]; then
-    upstream="$(upstream_repo_from_raw_base || true)"
-    if [[ -z "$upstream" || "$repo" != "$upstream" ]]; then
+    is_public_self_repo "$repo" ||
       die "Standard GitKeepr V1 runner setup does not support public target repositories."
-    fi
-    gh api "repos/$repo/contents/.github/workflows/self-gate.yml" >/dev/null 2>&1 ||
-      die "Public GitKeepr self-development requires .github/workflows/self-gate.yml on the default branch."
     say "OK    Public upstream repository accepted through the GitKeepr self-development gate"
   else
     say "OK    Private target repository"
@@ -242,6 +248,11 @@ runner_service_healthy() {
 
 warn_if_caller_missing() {
   local repo="$1"
+  if is_public_self_repo "$repo"; then
+    say "OK    Public self-development workflows are visible on the default branch"
+    return 0
+  fi
+
   if gh api "repos/$repo/contents/.github/workflows/gitkeepr.yml" >/dev/null 2>&1; then
     say "OK    .github/workflows/gitkeepr.yml is visible on the default branch"
   else
@@ -278,14 +289,21 @@ project_init() {
   git rev-parse --show-toplevel >/dev/null 2>&1 || die "Run 'gitkeepr init' inside a Git repository."
   gh auth status >/dev/null 2>&1 || die "GitHub CLI is not authenticated. Run 'gh auth login', then try again."
 
-  local repo visibility
+  local repo visibility self_repo=0
   repo="$(repo_name)" || die "Could not resolve the GitHub repository. Ensure the checkout has a GitHub remote usable by 'gh repo view'."
   visibility="$(repo_visibility)" || die "Could not determine repository visibility for $repo."
   if [[ "${visibility,,}" == "public" ]]; then
-    die "Standard GitKeepr V1 setup does not support public target repositories with persistent self-hosted runners."
+    if is_public_self_repo "$repo"; then
+      self_repo=1
+    else
+      die "Standard GitKeepr V1 setup does not support public target repositories with persistent self-hosted runners."
+    fi
   fi
 
   say "Repository: $repo"
+  if [[ "$self_repo" -eq 1 ]]; then
+    say "Mode: public GitKeepr self-development through the GitHub-hosted self-gate"
+  fi
   say ""
   say "Before continuing, add this repository to the GitKeepr GitHub App under 'Selected repositories'."
   local app_ok
@@ -316,31 +334,35 @@ project_init() {
   gh variable set GITKEEPR_REVIEW_VARIANT -R "$repo" --body "$review_variant"
   gh variable set GITKEEPR_MAX_CYCLES -R "$repo" --body "$max_cycles"
 
-  local tmp replace
-  tmp="$(mktemp)"
-  trap 'rm -f "$tmp"' RETURN
-  curl -fsSL "$RAW_BASE/templates/gitkeepr.yml" -o "$tmp"
-  mkdir -p "$(dirname "$WORKFLOW_PATH")"
-
-  if [[ -f "$WORKFLOW_PATH" ]] && ! cmp -s "$tmp" "$WORKFLOW_PATH"; then
-    say ""
-    say "Existing $WORKFLOW_PATH differs from the current GitKeepr template:"
-    diff -u "$WORKFLOW_PATH" "$tmp" || true
-    read -r -p "Replace it? [y/N]: " replace
-    if [[ "$replace" =~ ^[Yy]$ ]]; then
-      cp "$tmp" "$WORKFLOW_PATH"
-      say "Replaced $WORKFLOW_PATH"
-    else
-      say "Kept existing $WORKFLOW_PATH"
-    fi
-  elif [[ ! -f "$WORKFLOW_PATH" ]]; then
-    cp "$tmp" "$WORKFLOW_PATH"
-    say "Created $WORKFLOW_PATH"
+  if [[ "$self_repo" -eq 1 ]]; then
+    say "Public self-development uses .github/workflows/self-gate.yml and .github/workflows/pr-loop.yml; no standard caller file is created."
   else
-    say "$WORKFLOW_PATH is already current."
+    local tmp replace
+    tmp="$(mktemp)"
+    trap 'rm -f "$tmp"' RETURN
+    curl -fsSL "$RAW_BASE/templates/gitkeepr.yml" -o "$tmp"
+    mkdir -p "$(dirname "$WORKFLOW_PATH")"
+
+    if [[ -f "$WORKFLOW_PATH" ]] && ! cmp -s "$tmp" "$WORKFLOW_PATH"; then
+      say ""
+      say "Existing $WORKFLOW_PATH differs from the current GitKeepr template:"
+      diff -u "$WORKFLOW_PATH" "$tmp" || true
+      read -r -p "Replace it? [y/N]: " replace
+      if [[ "$replace" =~ ^[Yy]$ ]]; then
+        cp "$tmp" "$WORKFLOW_PATH"
+        say "Replaced $WORKFLOW_PATH"
+      else
+        say "Kept existing $WORKFLOW_PATH"
+      fi
+    elif [[ ! -f "$WORKFLOW_PATH" ]]; then
+      cp "$tmp" "$WORKFLOW_PATH"
+      say "Created $WORKFLOW_PATH"
+    else
+      say "$WORKFLOW_PATH is already current."
+    fi
+    rm -f "$tmp"
+    trap - RETURN
   fi
-  rm -f "$tmp"
-  trap - RETURN
 
   say ""
   say "Repository-side setup complete. GitKeepr did not stage or commit anything."
@@ -354,7 +376,7 @@ project_init() {
 project_doctor() {
   require_cmd git
   require_cmd gh
-  local failed=0 repo="" visibility="" name value tmp="" runner_lines=""
+  local failed=0 repo="" visibility="" name value tmp="" runner_lines="" self_repo=0
 
   if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
     say "FAIL  Git repository not detected"
@@ -383,8 +405,13 @@ project_doctor() {
       say "FAIL  Repository visibility could not be determined"
       failed=1
     elif [[ "${visibility,,}" == "public" ]]; then
-      say "FAIL  Public repository is outside the standard V1 persistent-runner setup"
-      failed=1
+      if is_public_self_repo "$repo"; then
+        self_repo=1
+        say "OK    Public upstream repository uses the GitKeepr self-development gate"
+      else
+        say "FAIL  Public repository is outside the standard V1 persistent-runner setup"
+        failed=1
+      fi
     else
       say "OK    Repository visibility is ${visibility,,}"
     fi
@@ -434,7 +461,16 @@ project_doctor() {
     say "INFO  GitHub App installation access is verified server-side by 'gitkeepr runner add'; project doctor does not have the private key."
   fi
 
-  if [[ -f "$WORKFLOW_PATH" ]]; then
+  if [[ "$self_repo" -eq 1 ]]; then
+    for name in self-gate.yml pr-loop.yml; do
+      if gh api "repos/$repo/contents/.github/workflows/$name" >/dev/null 2>&1; then
+        say "OK    .github/workflows/$name is visible on the default branch"
+      else
+        say "FAIL  .github/workflows/$name is missing from the default branch"
+        failed=1
+      fi
+    done
+  elif [[ -f "$WORKFLOW_PATH" ]]; then
     if ! command -v curl >/dev/null 2>&1; then
       say "FAIL  curl is required to check whether $WORKFLOW_PATH is current"
       failed=1
