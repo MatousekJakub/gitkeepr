@@ -187,6 +187,38 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("REQUESTED_FINAL_STATUS: ${{ steps.loop.outputs.final_status }}", publish)
         self.assertIn("gitkeepr-system-reply:v1", publish)
 
+    def test_initial_review_marker_requires_gitkeepr_bot_provenance(self):
+        authorize = CORE.split("- name: Resolve and authorize trigger", 1)[1].split(
+            "- name: Duplicate trigger already handled", 1
+        )[0]
+        marker_lookup = authorize.split("const reviewPrefix", 1)[1].split(
+            "core.setOutput('prior_status'", 1
+        )[0]
+        provenance = "loginOf(comment) === process.env.BOT_LOGIN"
+        self.assertIn(provenance, marker_lookup)
+        self.assertLess(
+            marker_lookup.index(provenance),
+            marker_lookup.index("String(comment.body || '').includes(reviewPrefix)"),
+        )
+
+    def test_comment_only_status_transition_prioritizes_review_verdict_then_prior_status(self):
+        loop = CORE.split("- name: Run Build Review loop", 1)[1]
+        transition = loop.split(
+            'if [[ "$changed" == "false" && "$TRIGGER_KIND" == "comment" && "$cycle" -eq 1 ]]',
+            1,
+        )[1].split("printf 'final_status=%s", 1)[0]
+
+        continue_transition = transition.index('if [[ "$INITIAL_REVIEW_VERDICT" == "continue" ]]')
+        pass_transition = transition.index('elif [[ "$INITIAL_REVIEW_VERDICT" == "pass" ]]')
+        prior_transition = transition.index(
+            'elif [[ "$PRIOR_STATUS" == "gitkeepr:blocked" || "$PRIOR_STATUS" == "gitkeepr:waiting-human" ]]'
+        )
+        self.assertLess(continue_transition, pass_transition)
+        self.assertLess(pass_transition, prior_transition)
+        self.assertIn('final_status="gitkeepr:blocked"', transition)
+        self.assertIn('final_status="gitkeepr:waiting-human"', transition)
+        self.assertIn('final_status="$PRIOR_STATUS"', transition)
+
     def test_final_status_accepts_preserved_stable_status_only_on_success(self):
         publish = CORE.split("- name: Publish result and finalize status", 1)[1]
         self.assertIn("const requestedFinalStatus = String(process.env.REQUESTED_FINAL_STATUS || '')", publish)

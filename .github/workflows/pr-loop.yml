@@ -308,6 +308,7 @@ jobs:
 
             const reviewPrefix = `<!-- gitkeepr-system-review:v1 head=${pr.head.sha} verdict=`
             const latestReview = [...comments].reverse().find(comment =>
+              loginOf(comment) === process.env.BOT_LOGIN &&
               String(comment.body || '').includes(reviewPrefix)
             )
             const latestReviewBody = String(latestReview?.body || '')
