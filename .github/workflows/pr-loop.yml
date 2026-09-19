@@ -442,6 +442,8 @@ jobs:
 
           Read .ai/plan.md if present, the current code and tests, the latest trusted trigger feedback, trusted PR discussion, and prior GitKeepr review below. Verify stale findings against the current HEAD.
 
+          Context7 and Chrome DevTools MCP tools are available on the runner. Use them when they are useful for the task—for example, Context7 for current or version-specific library documentation and Chrome DevTools for browser/runtime inspection. They are optional tools, not required workflow steps.
+
           Trigger kind: ${TRIGGER_KIND}
           - For a PR conversation comment, treat the feedback as the user's latest instruction or question. If code changes are warranted, implement them. If it is discussion or a question and code changes are not warranted, do not change repository files and answer directly in your final response.
           - For a submitted review, treat its body and inline comments as one batch. Address all still-relevant actionable findings together unless they conflict or require clarification.
@@ -535,6 +537,8 @@ jobs:
           You are the Review agent for pull request #${PR_NUMBER}. Review the checked-out PR at HEAD ${current_head} against the base branch. Read .ai/plan.md if present, inspect git diff ${BASE_REF}...HEAD, inspect relevant code and tests, and consider the trusted PR discussion below. Do not edit repository files.
 
           Verify every old finding against the current HEAD. Already-resolved feedback must not block PASS. Unresolved still-relevant correctness, testing, or scope problems must block PASS.
+
+          Context7 and Chrome DevTools MCP tools are available on the runner. Use them when they are useful for the task—for example, Context7 for current or version-specific library documentation and Chrome DevTools for browser/runtime inspection. They are optional tools, not required workflow steps.
 
           Latest trusted trigger feedback from @${TRIGGER_AUTHOR}:
           ${trigger_feedback}

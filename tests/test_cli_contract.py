@@ -100,7 +100,7 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("Ubuntu/Debian", doctor)
         self.assertIn("systemd", doctor)
         self.assertIn("x86_64|amd64|aarch64|arm64", doctor)
-        for command in ("curl", "git", "jq", "tar", "gh", "python3", "openssl"):
+        for command in ("curl", "git", "jq", "tar", "gh", "python3", "openssl", "xz", "node", "npm", "npx"):
             self.assertIn(command, doctor)
         self.assertIn("GITKEEPR_APP_CLIENT_ID", doctor)
         self.assertIn("GITKEEPR_APP_PRIVATE_KEY_PATH", doctor)
@@ -108,6 +108,11 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("600", doctor)
         self.assertIn("runner_cache_path", doctor)
         self.assertIn('"$opencode_path" models', doctor)
+        self.assertIn("node_runtime_ok", doctor)
+        self.assertIn("runner_chromium_path", doctor)
+        self.assertIn("chrome-devtools-mcp", doctor)
+        self.assertIn("context7-mcp", doctor)
+        self.assertIn("mcp list", doctor)
         self.assertIn("Runner filesystem free space", doctor)
         self.assertIn("actions.runner.*", doctor)
 
@@ -129,18 +134,34 @@ class CliContractTests(unittest.TestCase):
     def test_server_init_bootstraps_host_without_touching_existing_runners(self):
         init = self.function_body("server_init", "runner_add")
         self.assertIn("apt-get install -y", init)
-        for package in ("curl", "git", "jq", "tar", "ca-certificates", "gh", "python3", "openssl"):
+        for package in ("curl", "git", "jq", "tar", "xz-utils", "ca-certificates", "gh", "python3", "openssl"):
             self.assertIn(package, init)
         self.assertIn('useradd --create-home --shell /bin/bash "$RUNNER_USER"', init)
         self.assertIn("gh auth login", init)
         self.assertIn("https://opencode.ai/install", init)
         self.assertIn('"$opencode_path" auth login', init)
         self.assertIn('"$opencode_path" models', init)
+        self.assertIn("install_node_runtime", init)
+        self.assertIn("configure_runner_mcp_tools", init)
         self.assertIn("repos/actions/runner/releases/latest", init)
         self.assertIn('install -o root -g root -m 0600 "$tmp" "$SERVER_CONFIG"', init)
         self.assertIn("Existing repository runners were not modified.", init)
         self.assertNotIn("remove_runner_installation", init)
         self.assertNotIn('rm -rf "$home/runners"', init)
+
+    def test_runner_mcp_tooling_is_installed_and_merged_into_opencode_config(self):
+        helper = self.function_body("configure_runner_mcp_tools", "server_doctor")
+        self.assertIn("chrome-devtools-mcp@latest", helper)
+        self.assertIn("@upstash/context7-mcp@latest", helper)
+        self.assertIn("playwright@latest install --with-deps --no-shell chromium", helper)
+        self.assertIn("PLAYWRIGHT_BROWSERS_PATH", helper)
+        self.assertIn('.mcp["chrome-devtools"]', helper)
+        self.assertIn(".mcp.context7", helper)
+        self.assertIn("--headless", helper)
+        self.assertIn("--isolated", helper)
+        self.assertIn("--experimental-vision", helper)
+        self.assertIn("--chrome-arg=--lang=cs-CZ", helper)
+        self.assertIn('"$opencode_path" mcp list', helper)
 
     def test_app_verification_uses_server_client_id_and_private_key(self):
         jwt = self.function_body("github_app_jwt", "verify_app_access")

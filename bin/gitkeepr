@@ -503,9 +503,166 @@ project_doctor() {
   return "$failed"
 }
 
+node_runtime_ok() {
+  local version="" major="" minor=""
+  command -v node >/dev/null 2>&1 || return 1
+  command -v npm >/dev/null 2>&1 || return 1
+  command -v npx >/dev/null 2>&1 || return 1
+
+  version="$(node -p 'process.versions.node' 2>/dev/null || true)"
+  IFS='.' read -r major minor _ <<< "$version"
+  [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ ]] || return 1
+
+  if (( major >= 23 )); then
+    return 0
+  fi
+  if (( major == 22 && minor >= 12 )); then
+    return 0
+  fi
+  if (( major == 20 && minor >= 19 )); then
+    return 0
+  fi
+  return 1
+}
+
+install_node_runtime() {
+  local node_arch="" release_json="" node_version="" tarball="" tmpdir=""
+  local expected_sha="" actual_sha="" install_dir="" tool=""
+
+  if node_runtime_ok; then
+    say "Node.js runtime is compatible: $(node --version)"
+    return 0
+  fi
+
+  case "$(uname -m)" in
+    x86_64|amd64) node_arch="x64" ;;
+    aarch64|arm64) node_arch="arm64" ;;
+    *) die "Unsupported architecture for Node.js: $(uname -m)." ;;
+  esac
+
+  say "Installing a current Node.js LTS runtime for MCP tooling..."
+  release_json="$(curl -fsSL https://nodejs.org/dist/index.json)"
+  node_version="$(printf '%s' "$release_json" | jq -r '[.[] | select(.lts != false and .lts != null)][0].version // empty')"
+  [[ -n "$node_version" ]] || die "Could not resolve the current Node.js LTS release."
+
+  tarball="node-\${node_version}-linux-\${node_arch}.tar.xz"
+  tmpdir="$(mktemp -d)"
+  curl -fsSL "https://nodejs.org/dist/\${node_version}/\${tarball}" -o "$tmpdir/$tarball"
+  curl -fsSL "https://nodejs.org/dist/\${node_version}/SHASUMS256.txt" -o "$tmpdir/SHASUMS256.txt"
+
+  expected_sha="$(awk -v file="$tarball" '$2 == file { print $1 }' "$tmpdir/SHASUMS256.txt")"
+  [[ -n "$expected_sha" ]] || {
+    rm -rf "$tmpdir"
+    die "Could not resolve checksum for $tarball."
+  }
+  actual_sha="$(sha256sum "$tmpdir/$tarball" | awk '{print $1}')"
+  [[ "$actual_sha" == "$expected_sha" ]] || {
+    rm -rf "$tmpdir"
+    die "Checksum verification failed for $tarball."
+  }
+
+  install_dir="/opt/gitkeepr/node-\${node_version}"
+  if ! as_root test -x "$install_dir/bin/node"; then
+    as_root install -d -o root -g root -m 0755 "$install_dir"
+    as_root tar -xJf "$tmpdir/$tarball" -C "$install_dir" --strip-components=1
+  fi
+
+  for tool in node npm npx; do
+    as_root ln -sfn "$install_dir/bin/$tool" "/usr/local/bin/$tool"
+  done
+  rm -rf "$tmpdir"
+
+  node_runtime_ok || die "Node.js installation completed but the runtime is not compatible with GitKeepr MCP tooling."
+  say "Installed Node.js runtime: $(node --version)"
+}
+
+runner_chromium_path() {
+  local home=""
+  home="$(runner_home)"
+  [[ -n "$home" ]] || return 1
+  find "$home/.cache/ms-playwright" \
+    -type f \
+    -path '*/chromium-*/chrome-linux*/chrome' \
+    -perm -u+x \
+    2>/dev/null |
+    sort -V |
+    tail -n1
+}
+
+configure_runner_mcp_tools() {
+  local opencode_path="$1" home="" npm_prefix="" browser_cache="" chromium=""
+  local config="" tmp=""
+
+  home="$(runner_home)"
+  [[ -n "$home" ]] || die "Could not resolve home directory for $RUNNER_USER."
+  npm_prefix="$home/.local"
+  browser_cache="$home/.cache/ms-playwright"
+  config="$home/.config/opencode/opencode.json"
+
+  say "Installing/updating GitKeepr MCP servers for $RUNNER_USER..."
+  as_runner npm install --global --prefix "$npm_prefix" \
+    chrome-devtools-mcp@latest \
+    @upstash/context7-mcp@latest
+
+  chromium="$(runner_chromium_path || true)"
+  if [[ -z "$chromium" ]]; then
+    say "Installing Chromium and its Linux dependencies for $RUNNER_USER..."
+    as_root install -d -o "$RUNNER_USER" -g "$RUNNER_USER" -m 0755 "$browser_cache"
+    as_root env PLAYWRIGHT_BROWSERS_PATH="$browser_cache" \
+      npx -y playwright@latest install --with-deps --no-shell chromium
+    as_root chown -R "$RUNNER_USER:$RUNNER_USER" "$browser_cache"
+    chromium="$(runner_chromium_path || true)"
+  else
+    say "Runner Chromium already exists: $chromium"
+  fi
+  [[ -n "$chromium" && -x "$chromium" ]] || die "Chromium installation completed but no executable could be found for $RUNNER_USER."
+
+  tmp="$(mktemp)"
+  if as_runner test -f "$config"; then
+    as_runner cat "$config" > "$tmp"
+  else
+    printf '%s\n' '{"$schema":"https://opencode.ai/config.json"}' > "$tmp"
+  fi
+
+  if ! jq \
+    --arg chrome "$chromium" \
+    --arg chrome_mcp "$npm_prefix/bin/chrome-devtools-mcp" \
+    --arg context7 "$npm_prefix/bin/context7-mcp" \
+    '
+      .mcp = (.mcp // {}) |
+      .mcp["chrome-devtools"] = {
+        "type": "local",
+        "command": [
+          $chrome_mcp,
+          "--headless",
+          "--isolated",
+          ("--executablePath=" + $chrome),
+          "--experimental-vision",
+          "--usage-statistics=false",
+          "--chrome-arg=--lang=cs-CZ",
+          "--chrome-arg=--accept-lang=cs-CZ,cs,en-US,en"
+        ]
+      } |
+      .mcp.context7 = {
+        "type": "local",
+        "command": [$context7]
+      }
+    ' "$tmp" > "$tmp.next"; then
+    rm -f "$tmp" "$tmp.next"
+    die "Could not update the OpenCode MCP configuration."
+  fi
+
+  as_root install -d -o "$RUNNER_USER" -g "$RUNNER_USER" -m 0755 "$(dirname "$config")"
+  as_root install -o "$RUNNER_USER" -g "$RUNNER_USER" -m 0644 "$tmp.next" "$config"
+  rm -f "$tmp" "$tmp.next"
+
+  say "Configured Chrome DevTools and Context7 MCP servers for $RUNNER_USER."
+  as_runner "$opencode_path" mcp list || die "OpenCode could not connect to the configured MCP servers."
+}
+
 server_doctor() {
   local failed=0 os_id="" os_like="" arch config_client="" config_key="" config_contents="" mode="" owner=""
-  local opencode_path="" cache_path="" home="" service_count="" free_kb=""
+  local opencode_path="" cache_path="" home="" service_count="" free_kb="" chromium="" mcp_status=""
 
   if [[ -r /etc/os-release ]]; then
     # shellcheck disable=SC1091
@@ -534,7 +691,7 @@ server_doctor() {
   esac
 
   local cmd
-  for cmd in curl git jq tar gh python3 openssl; do
+  for cmd in curl git jq tar gh python3 openssl xz node npm npx; do
     if command -v "$cmd" >/dev/null 2>&1; then
       say "OK    $cmd available"
     else
@@ -542,6 +699,13 @@ server_doctor() {
       failed=1
     fi
   done
+
+  if node_runtime_ok; then
+    say "OK    Node.js runtime is compatible: $(node --version)"
+  else
+    say "FAIL  Node.js runtime is missing or too old for Chrome DevTools MCP; run 'gitkeepr server init'"
+    failed=1
+  fi
 
   if gh auth status >/dev/null 2>&1; then
     say "OK    admin gh authenticated"
@@ -559,6 +723,42 @@ server_doctor() {
         say "OK    OpenCode model listing works"
       else
         say "FAIL  'opencode models' failed for $RUNNER_USER"
+        failed=1
+      fi
+
+      home="$(runner_home)"
+      if as_runner test -x "$home/.local/bin/chrome-devtools-mcp"; then
+        say "OK    Chrome DevTools MCP installed for $RUNNER_USER"
+      else
+        say "FAIL  Chrome DevTools MCP missing for $RUNNER_USER; run 'gitkeepr server init'"
+        failed=1
+      fi
+      if as_runner test -x "$home/.local/bin/context7-mcp"; then
+        say "OK    Context7 MCP installed for $RUNNER_USER"
+      else
+        say "FAIL  Context7 MCP missing for $RUNNER_USER; run 'gitkeepr server init'"
+        failed=1
+      fi
+
+      chromium="$(runner_chromium_path || true)"
+      if [[ -n "$chromium" && -x "$chromium" ]]; then
+        say "OK    Chromium available to $RUNNER_USER: $chromium"
+      else
+        say "FAIL  Chromium missing for $RUNNER_USER; run 'gitkeepr server init'"
+        failed=1
+      fi
+
+      mcp_status="$(as_runner "$opencode_path" mcp list 2>&1 || true)"
+      if printf '%s\n' "$mcp_status" | grep -Eq 'chrome-devtools.*connected'; then
+        say "OK    Chrome DevTools MCP connects through OpenCode"
+      else
+        say "FAIL  Chrome DevTools MCP is not connected in OpenCode"
+        failed=1
+      fi
+      if printf '%s\n' "$mcp_status" | grep -Eq 'context7.*connected'; then
+        say "OK    Context7 MCP connects through OpenCode"
+      else
+        say "FAIL  Context7 MCP is not connected in OpenCode"
         failed=1
       fi
     else
@@ -690,7 +890,7 @@ server_init() {
 
   say "Installing/confirming server prerequisites..."
   as_root apt-get update
-  as_root apt-get install -y curl git jq tar ca-certificates gh python3 openssl
+  as_root apt-get install -y curl git jq tar xz-utils ca-certificates gh python3 openssl
 
   if ! id "$RUNNER_USER" >/dev/null 2>&1; then
     say "Creating dedicated $RUNNER_USER user..."
@@ -719,6 +919,9 @@ server_init() {
     say "OpenCode already exists for $RUNNER_USER:"
     as_runner "$opencode_path" --version || true
   fi
+
+  install_node_runtime
+  configure_runner_mcp_tools "$opencode_path"
 
   say ""
   say "OpenCode authentication is intentionally interactive and runs every time 'gitkeepr server init' runs."
