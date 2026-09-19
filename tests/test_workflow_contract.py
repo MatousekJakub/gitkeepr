@@ -134,9 +134,15 @@ class WorkflowContractTests(unittest.TestCase):
             loop,
         )
         self.assertIn(
-            'if [[ "$build_had_continue_review" == "true" && "$current_head" == "$start_head" ]]',
+            'if [[ "$build_had_continue_review" == "true" ]] && cmp -s "$review_context" "$review_file"',
             loop,
         )
+        self.assertIn(
+            'if [[ "$build_had_continue_review" == "true" && "$current_head" == "$start_head" && "$review_unchanged" == "true" ]]',
+            loop,
+        )
+        self.assertIn("review_unchanged=false", loop)
+        self.assertIn("review_unchanged=true", loop)
         self.assertNotIn(
             'if [[ "$changed" == "false" || "$current_head" == "$start_head" ]]',
             loop,
@@ -196,9 +202,14 @@ class WorkflowContractTests(unittest.TestCase):
         )[0]
         provenance = "loginOf(comment) === process.env.BOT_LOGIN"
         self.assertIn(provenance, marker_lookup)
+        self.assertIn("!body.includes('<!-- gitkeepr-system-reply:v1')", marker_lookup)
         self.assertLess(
             marker_lookup.index(provenance),
-            marker_lookup.index("String(comment.body || '').includes(reviewPrefix)"),
+            marker_lookup.index("body.includes(reviewPrefix)"),
+        )
+        self.assertLess(
+            marker_lookup.index("body.includes(reviewPrefix)"),
+            marker_lookup.index("!body.includes('<!-- gitkeepr-system-reply:v1')"),
         )
 
     def test_comment_only_status_transition_prioritizes_review_verdict_then_prior_status(self):

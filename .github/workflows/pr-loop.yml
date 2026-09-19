@@ -307,10 +307,12 @@ jobs:
             discussionEntries.sort((a, b) => String(a.at).localeCompare(String(b.at)))
 
             const reviewPrefix = `<!-- gitkeepr-system-review:v1 head=${pr.head.sha} verdict=`
-            const latestReview = [...comments].reverse().find(comment =>
-              loginOf(comment) === process.env.BOT_LOGIN &&
-              String(comment.body || '').includes(reviewPrefix)
-            )
+            const latestReview = [...comments].reverse().find(comment => {
+              const body = String(comment.body || '')
+              return loginOf(comment) === process.env.BOT_LOGIN &&
+                body.includes(reviewPrefix) &&
+                !body.includes('<!-- gitkeepr-system-reply:v1')
+            })
             const latestReviewBody = String(latestReview?.body || '')
             const initialReviewMatch = latestReviewBody.match(
               new RegExp(`<!-- gitkeepr-system-review:v1 head=${pr.head.sha} verdict=(pass|continue) -->`)
@@ -599,7 +601,11 @@ jobs:
               exit 0
             fi
 
-            if [[ "$build_had_continue_review" == "true" && "$current_head" == "$start_head" ]]; then
+            review_unchanged=false
+            if [[ "$build_had_continue_review" == "true" ]] && cmp -s "$review_context" "$review_file"; then
+              review_unchanged=true
+            fi
+            if [[ "$build_had_continue_review" == "true" && "$current_head" == "$start_head" && "$review_unchanged" == "true" ]]; then
               block "Build made no repository progress after receiving CONTINUE review for the current HEAD in cycle $cycle; stopping to avoid an infinite loop."
             fi
 
