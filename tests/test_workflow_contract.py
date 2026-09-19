@@ -135,6 +135,8 @@ class WorkflowContractTests(unittest.TestCase):
 
     def test_successful_handling_writes_processed_marker_only_in_success_path(self):
         publish = CORE.split("- name: Publish result and finalize status", 1)[1]
+        self.assertIn("PR_NUMBER: ${{ inputs.pr_number }}", publish)
+        self.assertIn("const prNumber = Number(process.env.PR_NUMBER)", publish)
         self.assertIn("const succeeded = process.env.LOOP_OUTCOME === 'success'", publish)
         self.assertIn("<!-- gitkeepr-trigger:v1 key=${triggerKey} -->", publish)
         success_block = publish.split("if (succeeded) {", 1)[1].split(

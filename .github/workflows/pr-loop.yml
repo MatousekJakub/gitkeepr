@@ -585,6 +585,7 @@ jobs:
         if: always() && steps.context.outputs.duplicate != 'true' && steps.app-token.outcome == 'success'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
+          PR_NUMBER: ${{ inputs.pr_number }}
           DIRECT_REPLY_FILE: ${{ runner.temp }}/gitkeepr-direct-reply.md
           BLOCKED_FILE: ${{ runner.temp }}/gitkeepr-blocked.md
           REVIEW_DIR: ${{ runner.temp }}/gitkeepr-loop-reviews
