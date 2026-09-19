@@ -91,7 +91,7 @@ Review:
 - returns `CONTINUE` when correctness/testing problems remain or planned work remains;
 - returns `PASS` only when the full current scope is complete and no still-relevant blocking feedback remains.
 
-No-progress protection stops the loop when Review says `CONTINUE` but no repository progress was made.
+A newly produced `CONTINUE` is always handed back to Build once before no-progress protection can stop the loop. No-progress blocks only when Build has already received a `CONTINUE` for the current HEAD, makes no repository progress, and Review still returns `CONTINUE` on that same HEAD. `GITKEEPR_MAX_CYCLES` remains the hard upper bound.
 
 ## Status labels
 
@@ -100,7 +100,7 @@ No-progress protection stops the loop when Review says `CONTINUE` but no reposit
 - `gitkeepr:waiting-human`
 - `gitkeepr:blocked`
 
-The core creates them when needed.
+The core creates them when needed. `gitkeepr:waiting-human` is the stable completed state after Review `PASS`; `gitkeepr:blocked` represents unresolved Review `CONTINUE` or another condition requiring human action. A trusted comment that only needs a direct reply must not erase that underlying stable state: an exact-current-HEAD `CONTINUE` remains blocked, an exact-current-HEAD `PASS` remains waiting-human, and otherwise the previous stable label is preserved when available.
 
 ## Idempotence
 
