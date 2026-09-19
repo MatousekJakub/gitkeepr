@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Focused static contract tests for GitKeepr workflow security and loop invariants."""
 from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+import textwrap
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -134,9 +139,10 @@ class WorkflowContractTests(unittest.TestCase):
             loop,
         )
         self.assertIn(
-            'if [[ "$build_had_continue_review" == "true" ]] && cmp -s "$review_context" "$review_file"',
+            'if [[ "$build_had_continue_review" == "true" ]] && python3 - "$review_context" "$review_file" <<\'PY\'',
             loop,
         )
+        self.assertIn("read_text().strip()", loop)
         self.assertIn(
             'if [[ "$build_had_continue_review" == "true" && "$current_head" == "$start_head" && "$review_unchanged" == "true" ]]',
             loop,
@@ -152,6 +158,41 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("exhausted GITKEEPR_MAX_CYCLES", loop)
         self.assertIn('set_gitkeepr_status "gitkeepr:building"', loop)
         self.assertIn('set_gitkeepr_status "gitkeepr:reviewing"', loop)
+
+    def test_review_comparison_ignores_only_trailing_formatting(self):
+        loop = CORE.split("- name: Run Build Review loop", 1)[1]
+        match = re.search(
+            r'''python3 - "\$review_context" "\$review_file" <<'PY'\n(?P<script>.*?)\n\s+PY''',
+            loop,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        comparison_script = textwrap.dedent(match.group("script"))
+
+        with tempfile.TemporaryDirectory() as directory:
+            previous = Path(directory) / "previous.md"
+            current = Path(directory) / "current.md"
+            previous.write_text("review body\n")
+            current.write_text("review body\n\n")
+
+            result = subprocess.run(
+                [sys.executable, "-", str(previous), str(current)],
+                input=comparison_script,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            current.write_text("changed review body\n")
+            result = subprocess.run(
+                [sys.executable, "-", str(previous), str(current)],
+                input=comparison_script,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
 
     def test_core_does_not_impose_a_generic_deterministic_test_command(self):
         self.assertNotIn("python3 -m unittest discover -s tests -v", CORE)
@@ -202,14 +243,33 @@ class WorkflowContractTests(unittest.TestCase):
         )[0]
         provenance = "loginOf(comment) === process.env.BOT_LOGIN"
         self.assertIn(provenance, marker_lookup)
-        self.assertIn("!body.includes('<!-- gitkeepr-system-reply:v1')", marker_lookup)
+        reply_marker = (
+            r"const systemReplyMarker = /(?:^|\n\n)<!-- gitkeepr-system-reply:v1 "
+            r"source-comment=\d+ head=[0-9a-f]{40} -->(?=\n\n|$)/"
+        )
+        self.assertIn(reply_marker, marker_lookup)
+        self.assertIn("!systemReplyMarker.test(body)", marker_lookup)
         self.assertLess(
             marker_lookup.index(provenance),
             marker_lookup.index("body.includes(reviewPrefix)"),
         )
         self.assertLess(
             marker_lookup.index("body.includes(reviewPrefix)"),
-            marker_lookup.index("!body.includes('<!-- gitkeepr-system-reply:v1')"),
+            marker_lookup.index("!systemReplyMarker.test(body)"),
+        )
+
+        reply_pattern = re.compile(
+            r"(?:^|\n\n)<!-- gitkeepr-system-reply:v1 source-comment=\d+ "
+            r"head=[0-9a-f]{40} -->(?=\n\n|$)"
+        )
+        self.assertIsNone(reply_pattern.search("A review mentions <!-- gitkeepr-system-reply:v1.\n"))
+        self.assertIsNotNone(
+            reply_pattern.search(
+                "Review body\n\n"
+                "<!-- gitkeepr-system-reply:v1 source-comment=123 head="
+                "0123456789abcdef0123456789abcdef01234567 -->\n\n"
+                "<!-- gitkeepr-trigger:v1 key=comment:123 -->"
+            )
         )
 
     def test_comment_only_status_transition_prioritizes_review_verdict_then_prior_status(self):

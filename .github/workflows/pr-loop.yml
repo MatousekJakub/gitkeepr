@@ -307,11 +307,12 @@ jobs:
             discussionEntries.sort((a, b) => String(a.at).localeCompare(String(b.at)))
 
             const reviewPrefix = `<!-- gitkeepr-system-review:v1 head=${pr.head.sha} verdict=`
+            const systemReplyMarker = /(?:^|\n\n)<!-- gitkeepr-system-reply:v1 source-comment=\d+ head=[0-9a-f]{40} -->(?=\n\n|$)/
             const latestReview = [...comments].reverse().find(comment => {
               const body = String(comment.body || '')
               return loginOf(comment) === process.env.BOT_LOGIN &&
                 body.includes(reviewPrefix) &&
-                !body.includes('<!-- gitkeepr-system-reply:v1')
+                !systemReplyMarker.test(body)
             })
             const latestReviewBody = String(latestReview?.body || '')
             const initialReviewMatch = latestReviewBody.match(
@@ -602,7 +603,15 @@ jobs:
             fi
 
             review_unchanged=false
-            if [[ "$build_had_continue_review" == "true" ]] && cmp -s "$review_context" "$review_file"; then
+            if [[ "$build_had_continue_review" == "true" ]] && python3 - "$review_context" "$review_file" <<'PY'
+              import pathlib
+              import sys
+
+              previous = pathlib.Path(sys.argv[1]).read_text().strip()
+              current = pathlib.Path(sys.argv[2]).read_text().strip()
+              raise SystemExit(0 if previous == current else 1)
+            PY
+            then
               review_unchanged=true
             fi
             if [[ "$build_had_continue_review" == "true" && "$current_head" == "$start_head" && "$review_unchanged" == "true" ]]; then
