@@ -34,7 +34,10 @@ After the release-preparation PR is merged, update the local `main` checkout and
 
 ```bash
 git switch main
-git fetch origin main
+if ! git fetch origin main --tags; then
+  printf '%s\n' 'Refusing to release: could not fetch the current origin/main.' >&2
+  exit 1
+fi
 
 if [[ -n "$(git status --porcelain)" ]]; then
   printf '%s\n' 'Refusing to release: the worktree is not clean.' >&2
@@ -47,13 +50,28 @@ if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
 fi
 ```
 
-Only after those checks pass, read the version, record that exact commit, and publish it using the prepared files as release assets:
+Only after those checks pass, read the version, record that exact commit, verify or create its release tag, and publish it using the prepared files as release assets:
 
 ```bash
 VERSION="$(cat VERSION)"
 SHA="$(git rev-parse HEAD)"
+TAG="v$VERSION"
 
-gh release create "v$VERSION" \
+if git show-ref --tags --verify --quiet "refs/tags/$TAG"; then
+  if ! TAG_SHA="$(git rev-parse "$TAG^{commit}")"; then
+    printf '%s\n' "Refusing to release: could not resolve $TAG." >&2
+    exit 1
+  fi
+  if [[ "$TAG_SHA" != "$SHA" ]]; then
+    printf '%s\n' "Refusing to release: $TAG does not point to HEAD." >&2
+    exit 1
+  fi
+elif ! git tag "$TAG" "$SHA"; then
+  printf '%s\n' "Refusing to release: could not create $TAG at HEAD." >&2
+  exit 1
+fi
+
+gh release create "$TAG" \
   --repo MatousekJakub/gitkeepr \
   --target "$SHA" \
   --title "GitKeepr v$VERSION" \
