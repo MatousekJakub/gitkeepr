@@ -36,7 +36,7 @@ jobs:
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
        !contains(github.event.comment.body, '<!-- gitkeepr:no-build -->') &&
        !contains(github.event.comment.body, '<!-- gitkeepr-system:'))
-    uses: MatousekJakub/gitkeepr/.github/workflows/pr-loop.yml@main
+    uses: MatousekJakub/gitkeepr/.github/workflows/pr-loop.yml@v0.1.0
     with:
       pr_number: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event_name == 'pull_request_review' && github.event.pull_request.number || github.event_name == 'issue_comment' && github.event.issue.number || inputs.pr_number }}
       trigger_kind: ${{ github.event_name == 'issue_comment' && 'comment' || github.event_name == 'pull_request_review' && 'review' || github.event_name == 'pull_request' && github.event.action == 'synchronize' && 'pr_sync' || github.event_name == 'pull_request' && 'pr_opened' || 'manual' }}

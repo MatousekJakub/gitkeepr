@@ -62,6 +62,13 @@ class WorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("triggerKey = `manual:${context.runId}`", manual)
 
+    def test_standard_caller_is_pinned_to_v010_release(self):
+        self.assertIn(
+            "uses: MatousekJakub/gitkeepr/.github/workflows/pr-loop.yml@v0.1.0",
+            CALLER,
+        )
+        self.assertNotIn("pr-loop.yml@main", CALLER)
+
     def test_caller_rejects_forks_and_bot_sync_without_hardcoded_identity(self):
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", CALLER)
         self.assertIn("github.event.sender.type != 'Bot'", CALLER)

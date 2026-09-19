@@ -5,11 +5,20 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = (ROOT / "bin/gitkeepr").read_text()
+INSTALLER = (ROOT / "install.sh").read_text()
 
 
 class CliContractTests(unittest.TestCase):
     def function_body(self, name: str, next_name: str) -> str:
         return CLI.split(f"{name}() {{", 1)[1].split(f"{next_name}() {{", 1)[0]
+
+    def test_v010_distribution_is_release_pinned(self):
+        self.assertIn('VERSION="0.1.0"', CLI)
+        self.assertIn('RELEASE_TAG="v${VERSION}"', CLI)
+        self.assertIn('raw.githubusercontent.com/MatousekJakub/gitkeepr/${RELEASE_TAG}', CLI)
+        self.assertIn('VERSION="${GITKEEPR_VERSION:-0.1.0}"', INSTALLER)
+        self.assertIn('releases/download/${TAG}', INSTALLER)
+        self.assertIn('"$tmp" version', INSTALLER)
 
     def test_project_init_never_owns_git_history(self):
         init = self.function_body("project_init", "project_doctor")

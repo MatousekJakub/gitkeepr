@@ -9,20 +9,20 @@
 - Public documentation, CLI output, prompts, generated system text, and repository content are English.
 - GitKeepr is intended to be public from the start.
 - Standard target-repository V1 support is private/trusted repositories only.
-- Target callers use GitKeepr `@main` in V1. Tagged/versioned distribution remains a separate release decision rather than a prerequisite for V1 operation.
+- Published V1 distribution is release-based. The current stable release is `v0.1.0`, and standard target callers pin the reusable core to that release tag rather than `@main`.
 - The reusable core may remain monolithic indefinitely if that stays practical.
 
 ## CLI UX
 
 - Distribution is a small shell CLI plus `install.sh`, not npm or a package manager.
-- Example install spirit: `curl -fsSL <raw>/install.sh | bash`.
+- The public install command downloads `install.sh` from the latest GitHub Release; that installer downloads the matching versioned `gitkeepr` release asset.
 - `install.sh` only installs/updates the CLI; it does not initialize projects or servers.
 - `gitkeepr init` operates on the current local Git repository.
 - `gitkeepr init` never commits, pushes, stages, stashes, or resets.
 - A dirty working tree is allowed.
 - For standard private target repositories, the only versioned project file created by `init` is `.github/workflows/gitkeepr.yml`.
 - The public upstream GitKeepr self-development exception configures variables but does not create the standard caller; it uses the committed `self-gate.yml` + `pr-loop.yml` path.
-- The current caller template is downloaded from GitKeepr `main` on every `init`.
+- The caller template is downloaded from the installed CLI's own release tag on every `init`; release upgrades are therefore explicit.
 - If the target workflow exists and differs, show the diff and ask `Replace? [y/N]`.
 - Local missing `git`, `gh`, or `gh` authentication produces an error plus instructions; local init does not auto-install/login.
 - `init` asks the user to confirm that the GitHub App was already added to the target repository. If not, stop with instructions.

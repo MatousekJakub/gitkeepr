@@ -3,10 +3,10 @@
 ## 1. Install the CLI
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MatousekJakub/gitkeepr/main/install.sh | bash
+curl -fsSL https://github.com/MatousekJakub/gitkeepr/releases/latest/download/install.sh | bash
 ```
 
-`install.sh` only installs/updates `gitkeepr` in `~/.local/bin` and prints a PATH hint when necessary.
+`install.sh` is published as a GitHub Release asset. Each installer is tied to its own release version and downloads the matching `gitkeepr` release asset into `~/.local/bin`; it prints a PATH hint when necessary.
 
 ## 2. Prepare the VPS once
 
@@ -38,7 +38,7 @@ Inside its checkout:
 gitkeepr init
 ```
 
-Standard V1 target repositories are private and trusted. Init asks you to confirm App installation, configures the five model/loop variables, and downloads the current caller template. The only versioned file it creates/replaces is `.github/workflows/gitkeepr.yml`; it never stages, commits, pushes, stashes, or resets.
+Standard V1 target repositories are private and trusted. Init asks you to confirm App installation, configures the five model/loop variables, and downloads the caller template from the CLI's own release tag. The only versioned file it creates/replaces is `.github/workflows/gitkeepr.yml`; it never stages, commits, pushes, stashes, or resets.
 
 Commit/push the caller yourself after inspection.
 

@@ -20,7 +20,7 @@ Ordinary repository CI remains independent of the AI Review verdict. GitKeepr V1
 
 ### Server
 
-1. Install/update the CLI from `main`.
+1. Install/update the CLI from the published GitHub Release asset and verify `gitkeepr version`.
 2. Run `gitkeepr server init`.
 3. Run `gitkeepr server doctor`.
 4. Repeat `server init` and confirm existing runner services remain untouched.

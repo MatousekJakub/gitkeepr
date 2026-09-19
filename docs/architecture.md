@@ -23,9 +23,9 @@ The target caller listens to:
 
 The caller is a cheap first trust/filter layer and invokes the reusable core at:
 
-`<upstream>/gitkeepr/.github/workflows/pr-loop.yml@main`
+`MatousekJakub/gitkeepr/.github/workflows/pr-loop.yml@v0.1.0`
 
-The core repeats authoritative security checks before checkout or OpenCode execution.
+The core repeats authoritative security checks before checkout or OpenCode execution. Standard target callers are release-pinned; upgrading the CLI and rerunning `gitkeepr init` is the explicit path to a newer core version.
 
 ### Reusable core
 

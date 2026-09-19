@@ -14,10 +14,10 @@ See `docs/testing.md` for the validated smoke matrix and `docs/known-issues.md` 
 
 ## Install
 
-Install or update the CLI:
+Install or update to the latest published release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MatousekJakub/gitkeepr/main/install.sh | bash
+curl -fsSL https://github.com/MatousekJakub/gitkeepr/releases/latest/download/install.sh | bash
 ```
 
 Prepare the Ubuntu/Debian VPS once:
@@ -32,7 +32,7 @@ Inside a private target repository:
 gitkeepr init
 ```
 
-Commit the generated `.github/workflows/gitkeepr.yml` after inspection, then on the VPS:
+The generated caller is pinned to the CLI's release tag (for V1, `v0.1.0`), so future changes on `main` do not silently change managed repositories. Commit the generated `.github/workflows/gitkeepr.yml` after inspection, then on the VPS:
 
 ```bash
 gitkeepr runner add owner/repo
