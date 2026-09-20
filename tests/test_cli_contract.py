@@ -188,6 +188,14 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("--chrome-arg=--lang=cs-CZ", helper)
         self.assertIn('jsonc_to_json "$tmp"', helper)
         self.assertIn('"$opencode_path" mcp list', helper)
+        self.assertIn(
+            'install -o "$RUNNER_USER" -g "$RUNNER_USER" -m 0600 "$tmp.next" "$config"',
+            helper,
+        )
+        self.assertNotIn(
+            'install -o "$RUNNER_USER" -g "$RUNNER_USER" -m 0644 "$tmp.next" "$config"',
+            helper,
+        )
 
         chrome = self.function_body("install_runner_chrome", "runner_opencode_config_path")
         self.assertIn("chrome-for-testing/last-known-good-versions-with-downloads.json", chrome)
