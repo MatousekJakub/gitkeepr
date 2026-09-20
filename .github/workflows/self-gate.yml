@@ -29,9 +29,7 @@ jobs:
        (github.event.action == 'opened' ||
         (github.event.action == 'synchronize' && github.event.sender.type != 'Bot'))) ||
       (github.event_name == 'pull_request_review' &&
-       github.event.action == 'submitted' &&
-       (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association) ||
-        startsWith(github.event.review.user.login, 'copilot-pull-request-reviewer'))) ||
+       github.event.action == 'submitted') ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request != null &&
        github.event.comment.user.type != 'Bot' &&
@@ -67,6 +65,33 @@ jobs:
             if (pr.head.repo?.full_name !== expectedRepo) {
               core.notice(`Ignoring fork PR ${pr.head.repo?.full_name || '(unknown)'}; persistent runner will not execute it`)
               return
+            }
+
+            if (event === 'pull_request_review') {
+              const reviewId = Number(payload.review?.id)
+              if (!Number.isSafeInteger(reviewId) || reviewId < 1) {
+                core.setFailed('Could not resolve a valid pull request review ID')
+                return
+              }
+
+              const { data: review } = await github.rest.pulls.getReview({
+                ...context.repo,
+                pull_number: prNumber,
+                review_id: reviewId,
+              })
+              const login = String(review.user?.login || '').toLowerCase()
+              const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR'])
+              const trustedHuman =
+                review.user?.type !== 'Bot' &&
+                trustedAssociations.has(String(review.author_association || '').toUpperCase())
+              const trustedCopilot =
+                review.user?.type === 'Bot' &&
+                (login === 'copilot' || login.startsWith('copilot-pull-request-reviewer'))
+
+              if (!trustedHuman && !trustedCopilot) {
+                core.notice(`Ignoring untrusted review from @${review.user?.login || '(unknown)'}`)
+                return
+              }
             }
 
             let triggerKind = 'manual'
