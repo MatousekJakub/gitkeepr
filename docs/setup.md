@@ -51,6 +51,8 @@ Self-development uses the existing:
 - `.github/workflows/self-gate.yml` on a GitHub-hosted runner;
 - `.github/workflows/pr-loop.yml` on the persistent runner only after the gate proves the PR is same-repository.
 
+Build and Review prompts are also told that Context7 and Chrome DevTools MCP are available on the runner. This is informational only: agents may use those tools when useful, but MCP use is not a required workflow step.
+
 Other public target repositories remain unsupported by the standard V1 persistent-runner setup.
 
 ## 5. Add the repository runner
