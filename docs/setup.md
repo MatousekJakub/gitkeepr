@@ -14,7 +14,7 @@ curl -fsSL https://github.com/MatousekJakub/gitkeepr/releases/latest/download/in
 gitkeepr server init
 ```
 
-Server init verifies Ubuntu/Debian + systemd + supported architecture, installs prerequisites, creates `github-runner` if needed, ensures the admin `gh` login, installs OpenCode if missing, always runs `opencode auth login` as `github-runner`, displays `opencode models`, caches the stable Actions runner package, and writes the GitHub App Client ID plus PEM path to root-owned `/etc/gitkeepr/config` mode 0600. Existing repository runners are not modified.
+Server init verifies Ubuntu/Debian + systemd + supported architecture, installs prerequisites, creates `github-runner` if needed, ensures the admin `gh` login, installs OpenCode if missing, ensures a Node.js runtime compatible with the bundled MCP tooling for `github-runner`, installs runner-owned Chrome DevTools MCP and Context7 packages, installs a supported Chrome for Testing build plus its Linux dependencies when Chrome is missing, and merges both MCP servers into the runner's OpenCode configuration. It then runs `opencode auth login` as `github-runner`, displays `opencode models`, caches the stable Actions runner package, and writes the GitHub App Client ID plus PEM path to root-owned `/etc/gitkeepr/config` mode 0600. Existing repository runners are not modified.
 
 ## 3. Create/install the GitHub App
 
@@ -51,6 +51,8 @@ Self-development uses the existing:
 - `.github/workflows/self-gate.yml` on a GitHub-hosted runner;
 - `.github/workflows/pr-loop.yml` on the persistent runner only after the gate proves the PR is same-repository.
 
+Build and Review prompts are also told that Context7 and Chrome DevTools MCP are available on the runner. This is informational only: agents may use those tools when useful, but MCP use is not a required workflow step.
+
 Other public target repositories remain unsupported by the standard V1 persistent-runner setup.
 
 ## 5. Add the repository runner
@@ -80,4 +82,4 @@ gitkeepr doctor
 gitkeepr server doctor
 ```
 
-Doctors are diagnostic and recommend action rather than silently repairing state. GitHub Settings → Actions → Runners → New self-hosted runner remains the manual troubleshooting fallback.
+Doctors are diagnostic and recommend action rather than silently repairing state. `gitkeepr server doctor` also checks the `github-runner` Node.js runtime, runner-owned MCP binaries, Chrome for Testing, and that both Chrome DevTools and Context7 report connected through OpenCode. GitHub Settings → Actions → Runners → New self-hosted runner remains the manual troubleshooting fallback.

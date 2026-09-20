@@ -159,6 +159,17 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('--variant "$GITKEEPR_REVIEW_VARIANT"', loop)
         self.assertIn('for cycle in $(seq 1 "$GITKEEPR_MAX_CYCLES")', loop)
 
+    def test_agents_are_informed_about_optional_mcp_tools(self):
+        loop = CORE.split("- name: Run Build Review loop", 1)[1]
+        self.assertEqual(
+            loop.count("Context7 and Chrome DevTools MCP tools are available on the runner."),
+            2,
+        )
+        self.assertEqual(
+            loop.count("They are optional tools, not required workflow steps."),
+            2,
+        )
+
     def test_build_does_not_own_git_operations(self):
         loop = CORE.split("- name: Run Build Review loop", 1)[1]
         self.assertIn(

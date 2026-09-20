@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Focused static tests for GitKeepr CLI safety and V1 lifecycle contracts."""
 from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,7 +102,7 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("Ubuntu/Debian", doctor)
         self.assertIn("systemd", doctor)
         self.assertIn("x86_64|amd64|aarch64|arm64", doctor)
-        for command in ("curl", "git", "jq", "tar", "gh", "python3", "openssl"):
+        for command in ("curl", "git", "jq", "tar", "unzip", "gh", "python3", "openssl", "xz"):
             self.assertIn(command, doctor)
         self.assertIn("GITKEEPR_APP_CLIENT_ID", doctor)
         self.assertIn("GITKEEPR_APP_PRIVATE_KEY_PATH", doctor)
@@ -108,6 +110,11 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("600", doctor)
         self.assertIn("runner_cache_path", doctor)
         self.assertIn('"$opencode_path" models', doctor)
+        self.assertIn("runner_node_runtime_ok", doctor)
+        self.assertIn("runner_chrome_path", doctor)
+        self.assertIn("chrome-devtools-mcp", doctor)
+        self.assertIn("context7-mcp", doctor)
+        self.assertIn("mcp list", doctor)
         self.assertIn("Runner filesystem free space", doctor)
         self.assertIn("actions.runner.*", doctor)
 
@@ -129,18 +136,103 @@ class CliContractTests(unittest.TestCase):
     def test_server_init_bootstraps_host_without_touching_existing_runners(self):
         init = self.function_body("server_init", "runner_add")
         self.assertIn("apt-get install -y", init)
-        for package in ("curl", "git", "jq", "tar", "ca-certificates", "gh", "python3", "openssl"):
+        for package in ("curl", "git", "jq", "tar", "unzip", "xz-utils", "ca-certificates", "gh", "python3", "openssl"):
             self.assertIn(package, init)
         self.assertIn('useradd --create-home --shell /bin/bash "$RUNNER_USER"', init)
         self.assertIn("gh auth login", init)
         self.assertIn("https://opencode.ai/install", init)
         self.assertIn('"$opencode_path" auth login', init)
         self.assertIn('"$opencode_path" models', init)
+        self.assertIn("install_node_runtime", init)
+        self.assertIn("configure_runner_mcp_tools", init)
         self.assertIn("repos/actions/runner/releases/latest", init)
         self.assertIn('install -o root -g root -m 0600 "$tmp" "$SERVER_CONFIG"', init)
         self.assertIn("Existing repository runners were not modified.", init)
         self.assertNotIn("remove_runner_installation", init)
         self.assertNotIn('rm -rf "$home/runners"', init)
+
+    def test_runner_mcp_tooling_is_installed_and_merged_into_opencode_config(self):
+        config_path = self.function_body("runner_opencode_config_path", "configure_runner_mcp_tools")
+        self.assertIn('[[ -f "$home/.config/opencode/opencode.jsonc" ]]', config_path)
+        self.assertIn('opencode.jsonc', config_path)
+        self.assertIn('opencode.json', config_path)
+
+        function = "runner_opencode_config_path() {" + config_path
+        with tempfile.TemporaryDirectory() as home:
+            config_dir = Path(home) / ".config/opencode"
+            config_dir.mkdir(parents=True)
+
+            def selected_config():
+                return subprocess.check_output(
+                    ["bash", "-c", function + '\nrunner_opencode_config_path "$1"', "bash", home],
+                    text=True,
+                ).strip()
+
+            self.assertEqual(selected_config(), str(config_dir / "opencode.json"))
+            (config_dir / "opencode.jsonc").touch()
+            self.assertEqual(selected_config(), str(config_dir / "opencode.jsonc"))
+            (config_dir / "opencode.json").touch()
+            self.assertEqual(selected_config(), str(config_dir / "opencode.jsonc"))
+
+        helper = self.function_body("configure_runner_mcp_tools", "server_doctor")
+        self.assertIn("chrome-devtools-mcp@latest", helper)
+        self.assertIn("@upstash/context7-mcp@latest", helper)
+        self.assertIn("runner_chrome_path", helper)
+        self.assertIn("install_runner_chrome", helper)
+        self.assertNotIn("playwright", helper.lower())
+        self.assertIn('.mcp["chrome-devtools"]', helper)
+        self.assertIn(".mcp.context7", helper)
+        self.assertIn("--headless", helper)
+        self.assertIn("--isolated", helper)
+        self.assertIn("--experimental-vision", helper)
+        self.assertIn("--chrome-arg=--lang=cs-CZ", helper)
+        self.assertIn('jsonc_to_json "$tmp"', helper)
+        self.assertIn('"$opencode_path" mcp list', helper)
+        self.assertIn(
+            'install -o "$RUNNER_USER" -g "$RUNNER_USER" -m 0600 "$tmp.next" "$config"',
+            helper,
+        )
+        self.assertNotIn(
+            'install -o "$RUNNER_USER" -g "$RUNNER_USER" -m 0644 "$tmp.next" "$config"',
+            helper,
+        )
+
+        chrome = self.function_body("install_runner_chrome", "runner_opencode_config_path")
+        self.assertIn("chrome-for-testing/last-known-good-versions-with-downloads.json", chrome)
+        self.assertIn("chrome.zip", chrome)
+        self.assertIn("unzip", chrome)
+
+    def test_jsonc_config_normalizer_accepts_comments_and_trailing_commas(self):
+        normalizer = self.function_body("jsonc_to_json", "configure_runner_mcp_tools")
+        config = (
+            "{\n"
+            "  // Keep the user's schema and comments parseable.\n"
+            '  "$schema": "https://opencode.ai/config.json",\n'
+            '  "description": "text with // characters and /* markers */,",\n'
+            "  \"mcp\": {\n"
+            '    "existing": {"type": "local",},\n'
+            "  },\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "opencode.jsonc"
+            path.write_text(config)
+            script = "jsonc_to_json() {" + normalizer + '\njsonc_to_json "$1"'
+            result = subprocess.run(
+                ["bash", "-c", script, "bash", str(path)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            __import__("json").loads(result.stdout),
+            {
+                "$schema": "https://opencode.ai/config.json",
+                "description": "text with // characters and /* markers */,",
+                "mcp": {"existing": {"type": "local"}},
+            },
+        )
 
     def test_app_verification_uses_server_client_id_and_private_key(self):
         jwt = self.function_body("github_app_jwt", "verify_app_access")
