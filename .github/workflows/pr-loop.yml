@@ -130,7 +130,7 @@ jobs:
             const loginOf = item => String(item?.user?.login || '')
             const isCopilot = item => {
               const login = loginOf(item).toLowerCase()
-              return login === 'copilot' || login.startsWith('copilot-pull-request-reviewer')
+              return login === 'copilot' || login === 'copilot-pull-request-reviewer[bot]'
             }
             const isTrustedHuman = item =>
               item?.user?.type !== 'Bot' &&
