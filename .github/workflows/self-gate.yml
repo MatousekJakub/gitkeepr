@@ -86,7 +86,7 @@ jobs:
                 trustedAssociations.has(String(review.author_association || '').toUpperCase())
               const trustedCopilot =
                 review.user?.type === 'Bot' &&
-                (login === 'copilot' || login.startsWith('copilot-pull-request-reviewer'))
+                (login === 'copilot' || login === 'copilot-pull-request-reviewer[bot]')
 
               if (!trustedHuman && !trustedCopilot) {
                 core.notice(`Ignoring untrusted review from @${review.user?.login || '(unknown)'}`)

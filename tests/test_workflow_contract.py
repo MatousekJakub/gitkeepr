@@ -126,13 +126,30 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("review.user?.type !== 'Bot'", review_auth)
         self.assertIn("review.user?.type === 'Bot'", review_auth)
         self.assertIn("login === 'copilot'", review_auth)
-        self.assertIn("login.startsWith('copilot-pull-request-reviewer')", review_auth)
+        self.assertIn("login === 'copilot-pull-request-reviewer[bot]'", review_auth)
+        self.assertNotIn("login.startsWith('copilot-pull-request-reviewer')", review_auth)
         self.assertIn("Ignoring untrusted review", review_auth)
-        self.assertTrue(
-            "copilot-pull-request-reviewer[bot]".startswith(
-                "copilot-pull-request-reviewer"
-            )
+        is_trusted_copilot = lambda login: login in {
+            "copilot",
+            "copilot-pull-request-reviewer[bot]",
+        }
+        self.assertTrue(is_trusted_copilot("copilot-pull-request-reviewer[bot]"))
+        self.assertFalse(is_trusted_copilot("copilot-pull-request-reviewer[bot]-impostor"))
+
+    def test_copilot_review_identity_is_exact_in_all_trigger_gates(self):
+        self.assertIn(
+            "github.event.review.user.login == 'copilot-pull-request-reviewer[bot]'",
+            CALLER,
         )
+        self.assertNotIn(
+            "startsWith(github.event.review.user.login, 'copilot-pull-request-reviewer')",
+            CALLER,
+        )
+        self.assertIn(
+            "login === 'copilot-pull-request-reviewer[bot]'",
+            CORE,
+        )
+        self.assertNotIn("login.startsWith('copilot-pull-request-reviewer')", CORE)
 
     def test_complete_loop_uses_configured_models_and_variants(self):
         loop = CORE.split("- name: Run Build Review loop", 1)[1]
