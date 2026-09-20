@@ -781,7 +781,7 @@ configure_runner_mcp_tools() {
   fi
 
   as_root install -d -o "$RUNNER_USER" -g "$RUNNER_USER" -m 0755 "$(dirname "$config")"
-  as_root install -o "$RUNNER_USER" -g "$RUNNER_USER" -m 0644 "$tmp.next" "$config"
+  as_root install -o "$RUNNER_USER" -g "$RUNNER_USER" -m 0600 "$tmp.next" "$config"
   rm -f "$tmp" "$normalized" "$tmp.next"
 
   say "Configured Chrome DevTools and Context7 MCP servers for $RUNNER_USER."
