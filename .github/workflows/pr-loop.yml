@@ -392,9 +392,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          APP_PRIVATE_KEY_MATERIAL="$APP_PRIVATE_KEY_INPUT"
-          unset APP_PRIVATE_KEY_INPUT
-          export -n APP_PRIVATE_KEY_MATERIAL
+          # Replace the initial secret-bearing shell before starting the loop.
+          # The key crosses the exec boundary through a short-lived descriptor.
+          if [[ "${GITKEEPR_SANITIZED:-}" != "1" ]]; then
+            exec env \
+              -u APP_PRIVATE_KEY_INPUT \
+              -u APP_PRIVATE_KEY_MATERIAL \
+              -u APP_TOKEN \
+              GITKEEPR_SANITIZED=1 \
+              bash "$0" "$@" 3<<<"$APP_PRIVATE_KEY_INPUT"
+          fi
+          APP_PRIVATE_KEY_MATERIAL="$(cat <&3)"
+          exec 3<&-
           APP_TOKEN=""
           APP_TOKEN_EXPIRES_EPOCH=0
           GITHUB_API_CODE=""
@@ -496,7 +505,7 @@ jobs:
             GIT_CONFIG_COUNT=1 \
             GIT_CONFIG_KEY_0=http.extraHeader \
             GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth_header" \
-              git push origin "HEAD:${HEAD_REF}"
+              git -c core.hooksPath=/dev/null push origin "HEAD:${HEAD_REF}"
           }
 
           push_head_with_app_token() {

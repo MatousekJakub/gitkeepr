@@ -178,9 +178,13 @@ class WorkflowContractTests(unittest.TestCase):
             "- name: Create final GitKeepr App token", 1
         )[0]
         self.assertIn("APP_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}", loop)
-        self.assertIn('APP_PRIVATE_KEY_MATERIAL="$APP_PRIVATE_KEY_INPUT"', loop)
-        self.assertIn("unset APP_PRIVATE_KEY_INPUT", loop)
-        self.assertIn("export -n APP_PRIVATE_KEY_MATERIAL", loop)
+        self.assertIn("GITKEEPR_SANITIZED", loop)
+        self.assertIn("-u APP_PRIVATE_KEY_INPUT", loop)
+        self.assertIn("bash \"$0\" \"$@\" 3<<<\"$APP_PRIVATE_KEY_INPUT\"", loop)
+        self.assertIn('APP_PRIVATE_KEY_MATERIAL="$(cat <&3)"', loop)
+        self.assertIn("exec 3<&-", loop)
+        self.assertLess(loop.index("exec env"), loop.index("base64url()"))
+        self.assertLess(loop.index("exec 3<&-"), loop.index("opencode run"))
         self.assertNotIn("APP_TOKEN: ${{ steps.app-token.outputs.token }}", loop)
         self.assertIn('"$GITHUB_API_URL/app/installations/$APP_INSTALLATION_ID/access_tokens"', loop)
         self.assertIn('"pull_requests":"write"', loop)
@@ -225,7 +229,7 @@ class WorkflowContractTests(unittest.TestCase):
             loop,
         )
         self.assertIn('git commit -m "gitkeepr: build cycle ${cycle}"', loop)
-        self.assertIn('git push origin "HEAD:${HEAD_REF}"', loop)
+        self.assertIn("git -c core.hooksPath=/dev/null push origin", loop)
         self.assertIn("push_head_with_app_token", loop)
         self.assertIn("including one retry with refreshed GitHub App credentials", loop)
 
