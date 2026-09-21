@@ -399,11 +399,32 @@ jobs:
               -u APP_PRIVATE_KEY_INPUT \
               -u APP_PRIVATE_KEY_MATERIAL \
               -u APP_TOKEN \
+              -u GITHUB_ENV \
+              -u GITHUB_PATH \
+              -u GITHUB_OUTPUT \
+              -u GITHUB_STEP_SUMMARY \
+              -u ACTIONS_RUNTIME_TOKEN \
+              -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+              -u ACTIONS_ID_TOKEN_REQUEST_URL \
               GITKEEPR_SANITIZED=1 \
-              bash "$0" "$@" 3<<<"$APP_PRIVATE_KEY_INPUT"
+              bash "$0" "$@" \
+                3<<<"$APP_PRIVATE_KEY_INPUT" \
+                4<<<"$GITHUB_OUTPUT"
           fi
           APP_PRIVATE_KEY_MATERIAL="$(cat <&3)"
+          GITKEEPR_OUTPUT_PATH="$(cat <&4)"
           exec 3<&-
+          exec 4<&-
+
+          AGENT_PATH="$PATH"
+          OPENCODE_BIN="$(command -v opencode || true)"
+          if [[ -z "$OPENCODE_BIN" || ! -x "$OPENCODE_BIN" ]]; then
+            echo "::error::OpenCode executable is not available"
+            exit 1
+          fi
+          PATH="/usr/bin:/bin"
+          export PATH
+
           APP_TOKEN=""
           APP_TOKEN_EXPIRES_EPOCH=0
           GITHUB_API_CODE=""
@@ -433,7 +454,7 @@ jobs:
             jwt="$(github_app_jwt)" || return 1
             repo_name="${GITHUB_REPOSITORY#*/}"
             response="$(
-              curl -fsS -X POST \
+              curl -q -fsS -X POST \
                 -H 'Accept: application/vnd.github+json' \
                 -H "Authorization: Bearer $jwt" \
                 -H 'X-GitHub-Api-Version: 2026-03-10' \
@@ -468,6 +489,7 @@ jobs:
                 return 1
               fi
               curl_args=(
+                -q
                 -sS
                 -o "$response_file"
                 -w '%{http_code}'
@@ -499,13 +521,20 @@ jobs:
           }
 
           git_push_once() {
-            local auth_header
+            local auth_header remote_url protocol
             ensure_app_token || return 1
+            remote_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+            protocol="${GITHUB_SERVER_URL%%:*}"
+            [[ "$protocol" == "https" || "$protocol" == "http" ]] || return 1
             auth_header="$(printf 'x-access-token:%s' "$APP_TOKEN" | openssl base64 -A)"
+            GIT_CONFIG_GLOBAL=/dev/null \
+            GIT_CONFIG_SYSTEM=/dev/null \
+            GIT_ALLOW_PROTOCOL="$protocol" \
+            GIT_TERMINAL_PROMPT=0 \
             GIT_CONFIG_COUNT=1 \
-            GIT_CONFIG_KEY_0=http.extraHeader \
+            GIT_CONFIG_KEY_0="http.${remote_url}.extraHeader" \
             GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth_header" \
-              git -c core.hooksPath=/dev/null push origin "HEAD:${HEAD_REF}"
+              git -c core.hooksPath=/dev/null push "$remote_url" "HEAD:refs/heads/${HEAD_REF}"
           }
 
           push_head_with_app_token() {
@@ -521,6 +550,24 @@ jobs:
 
           git config user.name "$APP_BOT_NAME"
           git config user.email "$APP_BOT_EMAIL"
+          GIT_CONFIG_PATH="$(git rev-parse --git-path config)"
+          TRUSTED_GIT_CONFIG_SHA="$(sha256sum "$GIT_CONFIG_PATH" | awk '{print $1}')"
+
+          assert_agent_git_boundary() {
+            local expected_head="$1" agent_name="$2" actual_head actual_branch config_sha
+            actual_head="$(git rev-parse HEAD)"
+            actual_branch="$(git symbolic-ref --quiet --short HEAD || true)"
+            if [[ ! -f "$GIT_CONFIG_PATH" ]]; then
+              block "$agent_name agent removed repository Git config."
+            fi
+            config_sha="$(sha256sum "$GIT_CONFIG_PATH" | awk '{print $1}')"
+            [[ "$actual_head" == "$expected_head" ]] ||
+              block "$agent_name agent changed Git HEAD from $expected_head to $actual_head; Git operations are workflow-owned."
+            [[ "$actual_branch" == "$HEAD_REF" ]] ||
+              block "$agent_name agent changed the checked-out branch from $HEAD_REF to ${actual_branch:-detached}; Git operations are workflow-owned."
+            [[ "$config_sha" == "$TRUSTED_GIT_CONFIG_SHA" ]] ||
+              block "$agent_name agent modified repository Git config; refusing to run credentialed Git operations with agent-controlled config."
+          }
 
           rm -f "$DIRECT_REPLY_FILE" "$BLOCKED_FILE"
           rm -rf "$REVIEW_DIR"
@@ -608,9 +655,10 @@ jobs:
             build_events="$RUNNER_TEMP/gitkeepr-build-${cycle}.jsonl"
             build_text_file="$RUNNER_TEMP/gitkeepr-build-${cycle}.md"
 
-            if ! env -u APP_PRIVATE_KEY_INPUT -u APP_PRIVATE_KEY_MATERIAL -u APP_TOKEN opencode run               --auto               --agent build               --model "$GITKEEPR_BUILD_MODEL"               --variant "$GITKEEPR_BUILD_VARIANT"               --format json               "$build_prompt"               > "$build_events"; then
+            if ! env -u APP_PRIVATE_KEY_INPUT -u APP_PRIVATE_KEY_MATERIAL -u APP_TOKEN PATH="$AGENT_PATH" "$OPENCODE_BIN" run               --auto               --agent build               --model "$GITKEEPR_BUILD_MODEL"               --variant "$GITKEEPR_BUILD_VARIANT"               --format json               "$build_prompt"               > "$build_events"; then
               block "Build agent failed during cycle $cycle."
             fi
+            assert_agent_git_boundary "$start_head" "Build"
 
             if ! BUILD_EVENTS="$build_events" BUILD_TEXT_FILE="$build_text_file" python3 - <<'PY'
           import json
@@ -651,7 +699,7 @@ jobs:
               elif [[ "$PRIOR_STATUS" == "gitkeepr:blocked" || "$PRIOR_STATUS" == "gitkeepr:waiting-human" ]]; then
                 final_status="$PRIOR_STATUS"
               fi
-              printf 'final_status=%s\n' "$final_status" >> "$GITHUB_OUTPUT"
+              printf 'final_status=%s\n' "$final_status" >> "$GITKEEPR_OUTPUT_PATH"
               cp "$build_text_file" "$DIRECT_REPLY_FILE"
               echo "Trusted PR comment handled without repository changes; preserving final status as $final_status and skipping Review."
               exit 0
@@ -659,7 +707,7 @@ jobs:
 
             if [[ "$changed" == "true" ]]; then
               git add -A
-              git commit -m "gitkeepr: build cycle ${cycle}"
+              git -c core.hooksPath=/dev/null commit -m "gitkeepr: build cycle ${cycle}"
               if ! push_head_with_app_token; then
                 block "Git push failed after Build cycle $cycle, including one retry with refreshed GitHub App credentials."
               fi
@@ -695,9 +743,10 @@ jobs:
           EOF
             )"
 
-            if ! env -u APP_PRIVATE_KEY_INPUT -u APP_PRIVATE_KEY_MATERIAL -u APP_TOKEN opencode run               --auto               --agent plan               --model "$GITKEEPR_REVIEW_MODEL"               --variant "$GITKEEPR_REVIEW_VARIANT"               --format json               "$review_prompt"               > "$review_events"; then
+            if ! env -u APP_PRIVATE_KEY_INPUT -u APP_PRIVATE_KEY_MATERIAL -u APP_TOKEN PATH="$AGENT_PATH" "$OPENCODE_BIN" run               --auto               --agent plan               --model "$GITKEEPR_REVIEW_MODEL"               --variant "$GITKEEPR_REVIEW_VARIANT"               --format json               "$review_prompt"               > "$review_events"; then
               block "Review agent failed during cycle $cycle."
             fi
+            assert_agent_git_boundary "$current_head" "Review"
 
             if ! verdict="$(REVIEW_EVENTS="$review_events" REVIEW_FILE="$review_file" HEAD_SHA="$current_head" python3 - <<'PY'
           import json

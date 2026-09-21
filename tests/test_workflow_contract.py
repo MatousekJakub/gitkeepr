@@ -180,22 +180,46 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("APP_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}", loop)
         self.assertIn("GITKEEPR_SANITIZED", loop)
         self.assertIn("-u APP_PRIVATE_KEY_INPUT", loop)
-        self.assertIn("bash \"$0\" \"$@\" 3<<<\"$APP_PRIVATE_KEY_INPUT\"", loop)
+        for name in (
+            "GITHUB_ENV",
+            "GITHUB_PATH",
+            "GITHUB_OUTPUT",
+            "GITHUB_STEP_SUMMARY",
+            "ACTIONS_RUNTIME_TOKEN",
+            "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+            "ACTIONS_ID_TOKEN_REQUEST_URL",
+        ):
+            self.assertIn(f"-u {name}", loop)
+        self.assertIn('3<<<"$APP_PRIVATE_KEY_INPUT"', loop)
+        self.assertIn('4<<<"$GITHUB_OUTPUT"', loop)
         self.assertIn('APP_PRIVATE_KEY_MATERIAL="$(cat <&3)"', loop)
+        self.assertIn('GITKEEPR_OUTPUT_PATH="$(cat <&4)"', loop)
         self.assertIn("exec 3<&-", loop)
+        self.assertIn("exec 4<&-", loop)
+        self.assertIn('AGENT_PATH="$PATH"', loop)
+        self.assertIn('OPENCODE_BIN="$(command -v opencode || true)"', loop)
+        self.assertIn('PATH="/usr/bin:/bin"', loop)
         self.assertLess(loop.index("exec env"), loop.index("base64url()"))
-        self.assertLess(loop.index("exec 3<&-"), loop.index("opencode run"))
+        self.assertLess(loop.index('PATH="/usr/bin:/bin"'), loop.index("refresh_app_token()"))
         self.assertNotIn("APP_TOKEN: ${{ steps.app-token.outputs.token }}", loop)
         self.assertIn('"$GITHUB_API_URL/app/installations/$APP_INSTALLATION_ID/access_tokens"', loop)
         self.assertIn('"pull_requests":"write"', loop)
         self.assertIn('"workflows":"write"', loop)
         self.assertIn('APP_TOKEN_EXPIRES_EPOCH" -le $((now + 300))', loop)
         self.assertIn("HTTP 401; refreshing and retrying", loop)
+        self.assertIn("curl -q -fsS -X POST", loop)
         self.assertIn("push_head_with_app_token", loop)
         self.assertIn("refreshing GitHub App credentials and retrying once", loop)
+        self.assertIn("GIT_CONFIG_GLOBAL=/dev/null", loop)
+        self.assertIn("GIT_CONFIG_SYSTEM=/dev/null", loop)
+        self.assertIn('GIT_ALLOW_PROTOCOL="$protocol"', loop)
+        self.assertIn('GIT_CONFIG_KEY_0="http.${remote_url}.extraHeader"', loop)
+        self.assertIn('push "$remote_url" "HEAD:refs/heads/${HEAD_REF}"', loop)
+        self.assertIn('TRUSTED_GIT_CONFIG_SHA="$(sha256sum "$GIT_CONFIG_PATH"', loop)
+        self.assertEqual(loop.count("assert_agent_git_boundary"), 3)
         self.assertEqual(
             loop.count(
-                "env -u APP_PRIVATE_KEY_INPUT -u APP_PRIVATE_KEY_MATERIAL -u APP_TOKEN opencode run"
+                'env -u APP_PRIVATE_KEY_INPUT -u APP_PRIVATE_KEY_MATERIAL -u APP_TOKEN PATH="$AGENT_PATH" "$OPENCODE_BIN" run'
             ),
             2,
         )
@@ -228,8 +252,8 @@ class WorkflowContractTests(unittest.TestCase):
             "Do not commit, push, create branches, or modify GitHub metadata",
             loop,
         )
-        self.assertIn('git commit -m "gitkeepr: build cycle ${cycle}"', loop)
-        self.assertIn("git -c core.hooksPath=/dev/null push origin", loop)
+        self.assertIn('git -c core.hooksPath=/dev/null commit -m "gitkeepr: build cycle ${cycle}"', loop)
+        self.assertIn('git -c core.hooksPath=/dev/null push "$remote_url"', loop)
         self.assertIn("push_head_with_app_token", loop)
         self.assertIn("including one retry with refreshed GitHub App credentials", loop)
 
@@ -350,7 +374,7 @@ class WorkflowContractTests(unittest.TestCase):
         )
         self.assertIn('if [[ "$INITIAL_REVIEW_VERDICT" == "continue" ]]', loop)
         self.assertIn('final_status="gitkeepr:blocked"', loop)
-        self.assertIn('printf \'final_status=%s\\n\' "$final_status" >> "$GITHUB_OUTPUT"', loop)
+        self.assertIn('printf \'final_status=%s\\n\' "$final_status" >> "$GITKEEPR_OUTPUT_PATH"', loop)
         self.assertIn('cp "$build_text_file" "$DIRECT_REPLY_FILE"', loop)
 
         publish = CORE.split("- name: Publish result and finalize status", 1)[1]
