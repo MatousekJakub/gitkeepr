@@ -28,7 +28,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("app_private_key: { required: true }", call_block)
 
         fallback = "${{ secrets.app_private_key || secrets.GITKEEPR_APP_PRIVATE_KEY }}"
-        self.assertEqual(CORE.count(fallback), 2)
+        self.assertEqual(CORE.count(fallback), 4)
 
         validation = CORE.split("- name: Validate repository configuration", 1)[1].split(
             "- name: Add OpenCode to PATH", 1
@@ -36,8 +36,16 @@ class WorkflowContractTests(unittest.TestCase):
         token = CORE.split("- name: Create GitKeepr App token", 1)[1].split(
             "- name: Resolve GitKeepr bot identity", 1
         )[0]
+        loop = CORE.split("- name: Run Build Review loop", 1)[1].split(
+            "- name: Create final GitKeepr App token", 1
+        )[0]
+        final_token = CORE.split("- name: Create final GitKeepr App token", 1)[1].split(
+            "- name: Publish result and finalize status", 1
+        )[0]
         self.assertIn(f"APP_PRIVATE_KEY: {fallback}", validation)
         self.assertIn(f"private-key: {fallback}", token)
+        self.assertIn(f"APP_PRIVATE_KEY_INPUT: {fallback}", loop)
+        self.assertIn(f"private-key: {fallback}", final_token)
         self.assertIn("app_private_key: ${{ secrets.GITKEEPR_APP_PRIVATE_KEY }}", CALLER)
 
     def test_authorization_happens_before_checkout(self):
@@ -52,7 +60,11 @@ class WorkflowContractTests(unittest.TestCase):
     def test_checkout_is_pinned_to_authorized_sha(self):
         checkout = CORE.split("- name: Check out exact PR head", 1)[1]
         self.assertIn("ref: ${{ steps.context.outputs.head_sha }}", checkout)
+        self.assertIn("persist-credentials: false", checkout)
+        self.assertNotIn("persist-credentials: true", checkout)
         self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"', checkout)
+        self.assertIn('APP_TOKEN: ${{ steps.app-token.outputs.token }}', checkout)
+        self.assertIn("GIT_CONFIG_KEY_0=http.extraHeader", checkout)
         self.assertIn('git fetch --no-tags origin "$BASE_REF"', checkout)
 
     def test_manual_trigger_uses_workflow_run_as_idempotence_key(self):
@@ -159,6 +171,42 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('--variant "$GITKEEPR_REVIEW_VARIANT"', loop)
         self.assertIn('for cycle in $(seq 1 "$GITKEEPR_MAX_CYCLES")', loop)
 
+    def test_long_running_loop_refreshes_app_credentials_and_finalizer_token(self):
+        self.assertIn("timeout-minutes: 360", CORE)
+
+        loop = CORE.split("- name: Run Build Review loop", 1)[1].split(
+            "- name: Create final GitKeepr App token", 1
+        )[0]
+        self.assertIn("APP_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}", loop)
+        self.assertIn('APP_PRIVATE_KEY_MATERIAL="$APP_PRIVATE_KEY_INPUT"', loop)
+        self.assertIn("unset APP_PRIVATE_KEY_INPUT", loop)
+        self.assertIn("export -n APP_PRIVATE_KEY_MATERIAL", loop)
+        self.assertNotIn("APP_TOKEN: ${{ steps.app-token.outputs.token }}", loop)
+        self.assertIn('"$GITHUB_API_URL/app/installations/$APP_INSTALLATION_ID/access_tokens"', loop)
+        self.assertIn('"pull_requests":"write"', loop)
+        self.assertIn('"workflows":"write"', loop)
+        self.assertIn('APP_TOKEN_EXPIRES_EPOCH" -le $((now + 300))', loop)
+        self.assertIn("HTTP 401; refreshing and retrying", loop)
+        self.assertIn("push_head_with_app_token", loop)
+        self.assertIn("refreshing GitHub App credentials and retrying once", loop)
+        self.assertEqual(
+            loop.count(
+                "env -u APP_PRIVATE_KEY_INPUT -u APP_PRIVATE_KEY_MATERIAL -u APP_TOKEN opencode run"
+            ),
+            2,
+        )
+
+        final_token = CORE.split("- name: Create final GitKeepr App token", 1)[1].split(
+            "- name: Publish result and finalize status", 1
+        )[0]
+        self.assertIn("if: always() && steps.context.outputs.duplicate != 'true'", final_token)
+        self.assertIn("actions/create-github-app-token@", final_token)
+
+        publish = CORE.split("- name: Publish result and finalize status", 1)[1]
+        self.assertIn("steps.final-app-token.outcome == 'success'", publish)
+        self.assertIn("github-token: ${{ steps.final-app-token.outputs.token }}", publish)
+        self.assertNotIn("github-token: ${{ steps.app-token.outputs.token }}", publish)
+
     def test_agents_are_informed_about_optional_mcp_tools(self):
         loop = CORE.split("- name: Run Build Review loop", 1)[1]
         self.assertEqual(
@@ -178,6 +226,8 @@ class WorkflowContractTests(unittest.TestCase):
         )
         self.assertIn('git commit -m "gitkeepr: build cycle ${cycle}"', loop)
         self.assertIn('git push origin "HEAD:${HEAD_REF}"', loop)
+        self.assertIn("push_head_with_app_token", loop)
+        self.assertIn("including one retry with refreshed GitHub App credentials", loop)
 
     def test_review_is_read_only_and_verdict_is_bound_to_current_head(self):
         loop = CORE.split("- name: Run Build Review loop", 1)[1]
@@ -249,7 +299,7 @@ class WorkflowContractTests(unittest.TestCase):
 
     def test_build_review_run_block_is_valid_bash(self):
         step = CORE.split("      - name: Run Build Review loop", 1)[1].split(
-            "      - name: Publish result and finalize status", 1
+            "      - name: Create final GitKeepr App token", 1
         )[0]
         script = step.split("        run: |\n", 1)[1]
         script = textwrap.dedent(script)
