@@ -12,42 +12,41 @@ bash -n bin/gitkeepr
 bash -n install.sh
 ```
 
-The tests protect the high-value contracts: project-init mutation boundaries, server/runner lifecycle structure, trust-before-checkout, same-repository execution, configured Build/Review models, exact-HEAD Review verdicts, max-cycle/no-progress behavior, success-only trigger markers, public self-gate behavior, release-version consistency and prepare-release dry runs, and full-SHA third-party Action pinning.
+The tests protect the high-value contracts: release-pinned installation, trust-before-checkout, explicit-only triggering, same-repository public self-development, configured Build/Review models, exact-HEAD Review verdicts, bounded-cycle outcomes, PR-HEAD ownership/supersede behavior, success-only trigger markers, credential isolation/refresh, and full-SHA third-party Action pinning.
 
-Ordinary repository CI remains independent of the AI Review verdict. GitKeepr V1 deliberately does not impose a universal deterministic verification command on target projects; Build chooses relevant tests for the current repository/task.
+Ordinary repository CI remains independent of the AI Review verdict. GitKeepr does not impose a universal verification command on target projects; Build chooses relevant tests for the current repository/task.
 
-## Live smoke checklist
+## v0.2 live smoke checklist
 
-### Server
+### Explicit triggering
 
-1. Install/update the CLI from the published GitHub Release asset and verify `gitkeepr version`.
-2. Run `gitkeepr server init`.
-3. Run `gitkeepr server doctor`.
-4. Repeat `server init` and confirm existing runner services remain untouched.
+1. Open a same-repository PR and confirm GitKeepr agent work does not start from PR open alone after the v0.2 gate is active.
+2. Push one or more commits and confirm they do not start GitKeepr.
+3. Add ordinary trusted comments and reviews and confirm they do not start GitKeepr.
+4. Post exact `/gitkeepr run` and confirm one bounded run starts.
+5. Redeliver the same command trigger and confirm processed-trigger idempotence skips model work.
+6. Verify `workflow_dispatch` starts a manual run.
 
-### Private target repository
+### Bounded loop
 
-1. Add the repo to the GitHub App.
-2. Run `gitkeepr init`, inspect and commit the caller.
-3. Run `gitkeepr runner add owner/repo`.
-4. Run `gitkeepr doctor`; expect caller, variables, App Client ID/secret, and an online `gitkeepr` runner.
-5. Repeat `runner add`; expect no healthy-runner re-registration.
-6. Exercise disposable unhealthy/reconfigure and remove paths.
+1. Exercise Build -> Review PASS and expect `gitkeepr:ready`.
+2. Exercise Build -> Review CONTINUE -> Build -> Review PASS with the default two-cycle budget.
+3. Exercise two Review CONTINUE verdicts and expect a successful workflow with `gitkeepr:needs-supervisor`, not a technical failure.
+4. Confirm Build is asked to resolve all safely actionable remaining work in each turn.
 
-### PR loop
+### HEAD ownership
 
-Verify PR-opened Build, App push, Review CONTINUE/PASS, multi-cycle progress, PASS → `gitkeepr:waiting-human`, no-code direct reply, no-progress → blocked, failure without processed marker, duplicate-trigger skip, no-build suppression, and bot-synchronize suppression.
+1. Start GitKeepr at HEAD A and externally push HEAD B while Build or Review is running.
+2. Confirm the stale run becomes `superseded`.
+3. Confirm it does not overwrite HEAD B, change durable result labels, or publish stale Review output.
+4. Start a fresh explicit run on HEAD B and confirm normal operation.
+
+### Failures
+
+Confirm harness/provider failure, invalid Review output, and unrecoverable push/auth failure produce an Actions failure without writing a persistent failure label or successful trigger marker.
 
 ### Public GitKeepr self-development
 
-Public self-development PR events are first handled by the GitHub-hosted
-`.github/workflows/self-gate.yml`. Only same-repository PRs may dispatch
-`.github/workflows/pr-loop.yml` to the persistent self-hosted runner; fork PRs
-must never reach that runner.
-
-Live validation confirmed both paths: a same-repository PR dispatched the candidate
-`pr-loop.yml` and completed Build → Review → CONTINUE → Build → Review → PASS on
-the persistent runner, while a fork PR was stopped by the GitHub-hosted self-gate
-with no `workflow_dispatch` created for the persistent runner.
+Confirm the GitHub-hosted gate dispatches only exact trusted `/gitkeepr run` commands or manual dispatch for same-repository PRs. Fork PRs must never reach the persistent runner.
 
 Record only observed failures in `docs/known-issues.md`.
