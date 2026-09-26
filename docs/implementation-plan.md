@@ -2,33 +2,39 @@
 
 > Automation-owned working plan. Keep this synchronized with reality while respecting human-owned decisions.
 
-## V1 implementation status
+## v0.2 implementation
 
-The planned implementation blocks are present:
+The v0.2 redesign intentionally keeps GitKeepr small and bounded.
 
-1. Clean repository, source-of-truth documentation, MIT license, installer, and shell CLI.
-2. `gitkeepr init` with the approved project-side contract and no Git-history ownership.
-3. Complete reusable Build ↔ Review loop with configured models/variants, max cycles, no-progress protection, direct replies, status labels, blocked UX, and success-only processed markers.
-4. Small target caller with the tested event set and conservative cheap trust filtering.
-5. `gitkeepr server init` for Ubuntu/Debian + systemd on amd64/arm64.
-6. Automated `runner add`, healthy repeat behavior, unhealthy reconfiguration, and `runner remove`.
-7. Project/server doctors.
-8. Public GitKeepr self-development gate on a GitHub-hosted runner before candidate core dispatch.
-9. Focused CLI/workflow contract tests and shell syntax CI.
-10. Third-party GitHub Actions pinned to full commit SHAs.
+### Phase 1 — behavioral contract
 
-## Operational validation
+- [x] explicit-only activation through exact trusted `/gitkeepr run` or manual dispatch;
+- [x] remove automatic PR-open/synchronize/review/ordinary-comment activation;
+- [x] default `GITKEEPR_MAX_CYCLES` to 2;
+- [x] make Build operate as a finalizer and address all safely actionable remaining work in a turn;
+- [x] replace transient/blocking status machine with `ready` and `needs-supervisor`;
+- [x] make exhausted cycles a successful supervisor checkpoint;
+- [x] add PR-HEAD ownership checks and `superseded` semantics;
+- [x] preserve GitHub App credential refresh/retry and agent Git-boundary protections;
+- [x] retire the external-helper/no-build/direct-reply protocol;
+- [ ] complete automated contract CI on the implementation PR;
+- [ ] complete live v0.2 smoke validation on the VPS.
 
-V1 live validation is complete for the tested Ubuntu/ARM64 server and repository workflows. The exercised matrix is recorded in `docs/testing.md`, with the current validation state in `docs/known-issues.md`.
+### Phase 2 — structural polish
 
-Future work should be driven by observed defects, operational needs, or explicit product decisions rather than by inventing another V1 implementation phase.
+After the behavioral contract is validated:
 
-## Constraints that remain deliberate
+- evaluate moving deterministic orchestration out of the monolithic YAML/Bash workflow into a small testable module;
+- define a thin harness boundary so OpenCode can later be replaced by or coexist with Codex CLI/Pi without changing the v0.2 workflow contract;
+- keep provisioning concerns separate from core finalization semantics where practical.
 
+Do not begin Phase 2 by adding abstractions for hypothetical needs. Use the validated v0.2 behavior as the contract.
+
+## Deliberate constraints
+
+- GitHub Actions remains the control plane.
+- GitHub PR/branch remains the shared durable source of truth.
+- No custom queue/database/dispatcher/polling service.
 - No generic verification-command framework.
-- No global concurrency lock without an observed problem.
-- No Dependabot-specific integration.
-- No clean-working-tree requirement for project init.
-- No SSH model discovery from project init.
-- No automated GitHub App creation/installation.
-- No polling, custom dispatcher, database, or queue.
+- No global VPS concurrency lock without an observed problem.
+- No automatic GitHub App creation/installation.
