@@ -25,6 +25,9 @@ class CliContractTests(unittest.TestCase):
 
     def test_project_init_defaults_to_two_finalization_cycles(self):
         init = self.function_body("project_init", "project_doctor")
+        self.assertIn('if [[ "$current" == "15" ]]; then', init)
+        self.assertIn('current="2"', init)
+        self.assertIn("Migrating the v0.1 default max-cycle suggestion from 15 to 2", init)
         self.assertIn('max_cycles="$(prompt_value "Max cycles" "${current:-2}")"', init)
     def test_project_init_never_owns_git_history(self):
         init = self.function_body("project_init", "project_doctor")
