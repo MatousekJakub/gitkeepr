@@ -37,7 +37,7 @@ Variables configured by `gitkeepr init`:
 - `GITKEEPR_BUILD_VARIANT`
 - `GITKEEPR_REVIEW_MODEL`
 - `GITKEEPR_REVIEW_VARIANT`
-- `GITKEEPR_MAX_CYCLES`
+- `GITKEEPR_FINALIZATION_CYCLES`
 
 Suggested defaults when no value exists:
 
