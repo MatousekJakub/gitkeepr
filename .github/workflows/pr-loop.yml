@@ -92,8 +92,8 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const labels = [
-              { name: 'gitkeepr:ready', color: '1f883d', description: 'GitKeepr finalization reached Review PASS' },
-              { name: 'gitkeepr:needs-supervisor', color: 'bf8700', description: 'GitKeepr bounded finalization ended with unresolved work' },
+              { name: 'gitkeepr:ready', color: '1f883d', description: 'Last completed GitKeepr finalization reached Review PASS' },
+              { name: 'gitkeepr:needs-supervisor', color: 'bf8700', description: 'Last completed GitKeepr finalization ended with unresolved work' },
             ]
             for (const label of labels) {
               try {
