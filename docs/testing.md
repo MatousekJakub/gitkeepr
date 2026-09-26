@@ -41,13 +41,13 @@ Before calling a v0.2 release operationally validated, exercise the remaining pa
 
 - [x] Exact trusted `/gitkeepr run` dispatches one bounded run.
 - [x] Development pushes do not automatically start GitKeepr.
-- [ ] After the v0.2 default-branch gate is active, confirm an ordinary trusted comment/review only produces a skipped gate job and never reaches the persistent runner.
-- [ ] Redeliver the same successful command trigger and confirm processed-trigger idempotence skips model work.
-- [ ] Verify the public self-gate `workflow_dispatch` manual path.
+- [x] After the v0.2 default-branch gate is active, confirm an ordinary trusted comment only produces a skipped gate job and never reaches the persistent runner.
+- [x] Redeliver the same successful command trigger and confirm processed-trigger idempotence skips model work.
+- [x] Verify the public self-gate `workflow_dispatch` manual path.
 
 ### Bounded loop
 
-- [ ] Exercise Build -> Review `PASS` and expect `gitkeepr:ready`.
+- [x] Exercise Build -> Review `PASS` and expect `gitkeepr:ready`.
 - [ ] Exercise Build -> Review `CONTINUE` -> Build -> Review `PASS`.
 - [x] Exercise two Review `CONTINUE` verdicts and expect a successful workflow with `gitkeepr:needs-supervisor`.
 - [x] Confirm the live run uses the default two-cycle budget when `GITKEEPR_FINALIZATION_CYCLES` is not configured.
@@ -69,5 +69,18 @@ Before calling a v0.2 release operationally validated, exercise the remaining pa
 
 - [x] Same-repository explicit commands reach the persistent runner through the GitHub-hosted gate.
 - [ ] Reconfirm fork PR isolation after the v0.2 gate is on the default branch.
+
+## Post-merge release-candidate evidence
+
+On 2026-09-26, PR #14 was used as a disposable post-merge smoke PR against the v0.2 default-branch gate and the real persistent VPS runner:
+
+- PR open produced CI only;
+- a second ordinary push produced CI only;
+- an ordinary trusted comment produced a skipped GitHub-hosted self-gate job and no persistent-runner dispatch;
+- exact `/gitkeepr run` dispatched PR Loop #29 and reached Review `PASS` on the same HEAD;
+- rerunning the same original gate event dispatched PR Loop #30, which recognized the existing `gitkeepr-trigger:v2` marker and skipped checkout, Build, Review, and finalization work;
+- manual self-gate `workflow_dispatch` dispatched PR Loop #31 and reached Review `PASS` on the same HEAD.
+
+The smoke PR was closed without merge.
 
 Record only observed failures in `docs/known-issues.md`. Unchecked release smoke items are rollout validation, not evidence that the implementation PR is incomplete.
