@@ -2,37 +2,41 @@
 
 > Human-owned source of truth. Automation may clarify factual details, but must not change the approved goal or scope without an explicit human instruction.
 
-GitKeepr should make an AI Build ↔ Review loop practical to reuse on new repositories without searching old chats, copying large workflows by hand, or rebuilding runner setup from memory.
+GitKeepr should provide a small, reliable bridge between a ChatGPT-led development workflow and agents that can work inside the real project environment.
 
-## V1 goal
+## v0.2 goal
 
 A user should be able to:
 
 - prepare one Ubuntu/Debian VPS with `gitkeepr server init`;
-- configure a private GitHub repository with `gitkeepr init`;
-- add a repository-specific persistent runner with `gitkeepr runner add owner/repo`;
-- choose Build/Review models and variants through repository variables;
-- use PR creation, pushes, trusted comments, submitted reviews, and manual dispatch as triggers;
-- let Build and Review iterate until `PASS` or a clear blocked state;
-- recover from failures without hidden state;
-- understand the entire setup from this repository alone.
+- configure a private GitHub repository and persistent runner;
+- let ChatGPT/user perform most planning and implementation through the normal PR;
+- explicitly request bounded finalization with `/gitkeepr run`;
+- let Build and independent Review use shell, tests, repository context, and optional MCP/browser tools;
+- stop after a small configured budget instead of trying to converge indefinitely;
+- treat unresolved work as a normal supervisor checkpoint;
+- allow external actors to update the PR without GitKeepr racing or overwriting them;
+- recover from failures without a custom database, dispatcher, or hidden orchestration state.
 
 ## Design values
 
-- Prefer a small number of obvious moving parts.
-- Prefer GitHub-native mechanisms over custom dispatchers, databases, webhooks, polling services, or queues.
-- Prefer explicit shell commands and documented GitHub configuration over magic.
+- ChatGPT/user orchestration is primary; GitKeepr supplies missing real-environment capabilities.
+- GitHub PR/branch is the durable shared source of truth.
+- Prefer explicit activation over ambient event-driven automation.
+- Prefer short bounded work over long autonomous loops.
+- Prefer GitHub-native mechanisms over custom queues, databases, webhooks, or polling services.
+- Separate agent reasoning from workflow-owned Git/GitHub mutations.
 - Do not create abstractions without an observed need.
 - It is valid to delete or simplify code instead of adding features.
-- AI `PASS` is not the same thing as CI success or human approval.
+- AI `PASS` is not CI success or merge approval.
 
-## Explicit non-goals for V1
+## Explicit non-goals
 
-- No Issue → plan → approval → PR workflow.
+- No Issue -> plan -> approval -> PR workflow.
+- No attempt to make GitKeepr the user's main UX or primary orchestrator.
+- No automatic reaction to every PR push, comment, or review.
 - No global VPS concurrency manager.
-- No generic deterministic verification framework beyond the agent running relevant tests and normal repository CI.
-- No Dependabot-specific integration.
-- No standard setup for public target repositories using persistent self-hosted runners.
+- No generic deterministic verification framework beyond project CI and agent-selected relevant tests.
+- No standard persistent-runner setup for arbitrary public target repositories.
 - No automated creation or installation of the GitHub App.
-- No special bot-trigger trust framework for external helpers.
 - No custom scheduler, webhook service, dispatcher service, database, or polling loop.

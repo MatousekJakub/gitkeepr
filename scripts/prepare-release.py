@@ -55,7 +55,7 @@ def release_notes_template(version: str, previous: str) -> str:
 - [ ] `python3 -m unittest discover -s tests -v`
 - [ ] `bash -n bin/gitkeepr`
 - [ ] `bash -n install.sh`
-- [ ] Self-development PR reached `gitkeepr:waiting-human` with Review `PASS`
+- [ ] Self-development PR reached `gitkeepr:ready` with Review `PASS`
 
 ## Upgrade
 

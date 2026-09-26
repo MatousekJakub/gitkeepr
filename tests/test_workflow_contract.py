@@ -48,15 +48,6 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn(f"private-key: {fallback}", final_token)
         self.assertIn("app_private_key: ${{ secrets.GITKEEPR_APP_PRIVATE_KEY }}", CALLER)
 
-    def test_authorization_happens_before_checkout(self):
-        authorize = CORE.index("- name: Resolve and authorize trigger")
-        checkout = CORE.index("- name: Check out exact PR head")
-        self.assertLess(authorize, checkout)
-        security_block = CORE[authorize:checkout]
-        self.assertIn("pr.head.repo?.full_name !== expectedRepo", security_block)
-        self.assertIn("isTrustedHuman", security_block)
-        self.assertIn("gitkeepr:no-build", security_block)
-
     def test_checkout_is_pinned_to_authorized_sha(self):
         checkout = CORE.split("- name: Check out exact PR head", 1)[1]
         self.assertIn("ref: ${{ steps.context.outputs.head_sha }}", checkout)
@@ -87,164 +78,13 @@ class WorkflowContractTests(unittest.TestCase):
         )
         self.assertNotIn("pr-loop.yml@main", CALLER)
 
-    def test_caller_rejects_forks_and_bot_sync_without_hardcoded_identity(self):
-        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", CALLER)
-        self.assertIn("github.event.sender.type != 'Bot'", CALLER)
-        self.assertNotIn("gitkeepr-githubapp[bot]", CALLER)
-
-    def test_caller_comment_trust_is_conservative(self):
-        self.assertIn("github.event.comment.user.type != 'Bot'", CALLER)
-        self.assertIn('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]', CALLER)
-        self.assertIn("<!-- gitkeepr:no-build -->", CALLER)
-
-    def test_public_self_gate_checks_same_repo_before_candidate_dispatch(self):
-        gate_step = SELF_GATE.split(
-            "- name: Verify same-repository PR and dispatch candidate core", 1
-        )[1]
-        same_repo_check = gate_step.index("pr.head.repo?.full_name !== expectedRepo")
-        dispatch = gate_step.index("github.rest.actions.createWorkflowDispatch")
-        self.assertLess(same_repo_check, dispatch)
-        self.assertIn("return", gate_step[same_repo_check:dispatch])
-        self.assertIn("workflow_id: 'pr-loop.yml'", gate_step[dispatch:])
-        self.assertIn("ref: pr.head.ref", gate_step[dispatch:])
-        for name in ("pr_number", "trigger_kind", "trigger_source_id"):
-            self.assertIn(f"{name}:", gate_step[dispatch:])
-
-    def test_public_self_gate_keeps_untrusted_events_off_persistent_runner(self):
-        self.assertIn("runs-on: ubuntu-latest", SELF_GATE)
-        self.assertNotIn("runs-on: [self-hosted", SELF_GATE)
-        self.assertIn("github.event.sender.type != 'Bot'", SELF_GATE)
-        self.assertIn("github.event.comment.user.type != 'Bot'", SELF_GATE)
-        self.assertIn("<!-- gitkeepr:no-build -->", SELF_GATE)
-        self.assertIn("<!-- gitkeepr-system:", SELF_GATE)
-
-    def test_public_self_gate_authorizes_submitted_reviews_inside_hosted_gate(self):
-        condition = SELF_GATE.split("    if: >-", 1)[1].split("    steps:", 1)[0]
-        self.assertIn(
-            "(github.event_name == 'pull_request_review' &&\n"
-            "       github.event.action == 'submitted')",
-            condition,
-        )
-        self.assertNotIn("github.event.review.user.login", condition)
-
-        gate_step = SELF_GATE.split(
-            "- name: Verify same-repository PR and dispatch candidate core", 1
-        )[1]
-        review_lookup = gate_step.index("github.rest.pulls.getReview")
-        dispatch = gate_step.index("github.rest.actions.createWorkflowDispatch")
-        self.assertLess(review_lookup, dispatch)
-
-        review_auth = gate_step[review_lookup:dispatch]
-        self.assertIn("review.user?.type !== 'Bot'", review_auth)
-        self.assertIn("review.user?.type === 'Bot'", review_auth)
-        self.assertIn("login === 'copilot'", review_auth)
-        self.assertIn("login === 'copilot-pull-request-reviewer[bot]'", review_auth)
-        self.assertNotIn("login.startsWith('copilot-pull-request-reviewer')", review_auth)
-        self.assertIn("Ignoring untrusted review", review_auth)
-        is_trusted_copilot = lambda login: login in {
-            "copilot",
-            "copilot-pull-request-reviewer[bot]",
-        }
-        self.assertTrue(is_trusted_copilot("copilot-pull-request-reviewer[bot]"))
-        self.assertFalse(is_trusted_copilot("copilot-pull-request-reviewer[bot]-impostor"))
-
-    def test_copilot_review_identity_is_exact_in_all_trigger_gates(self):
-        self.assertIn(
-            "github.event.review.user.login == 'copilot-pull-request-reviewer[bot]'",
-            CALLER,
-        )
-        self.assertNotIn(
-            "startsWith(github.event.review.user.login, 'copilot-pull-request-reviewer')",
-            CALLER,
-        )
-        self.assertIn(
-            "login === 'copilot-pull-request-reviewer[bot]'",
-            CORE,
-        )
-        self.assertNotIn("login.startsWith('copilot-pull-request-reviewer')", CORE)
-
     def test_complete_loop_uses_configured_models_and_variants(self):
         loop = CORE.split("- name: Run Build Review loop", 1)[1]
         self.assertIn('--model "$GITKEEPR_BUILD_MODEL"', loop)
         self.assertIn('--variant "$GITKEEPR_BUILD_VARIANT"', loop)
         self.assertIn('--model "$GITKEEPR_REVIEW_MODEL"', loop)
         self.assertIn('--variant "$GITKEEPR_REVIEW_VARIANT"', loop)
-        self.assertIn('for cycle in $(seq 1 "$GITKEEPR_MAX_CYCLES")', loop)
-
-    def test_long_running_loop_refreshes_app_credentials_and_finalizer_token(self):
-        self.assertIn("timeout-minutes: 360", CORE)
-
-        loop = CORE.split("- name: Run Build Review loop", 1)[1].split(
-            "- name: Create final GitKeepr App token", 1
-        )[0]
-        self.assertIn("APP_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}", loop)
-        self.assertIn("GITKEEPR_SANITIZED", loop)
-        self.assertIn("-u APP_PRIVATE_KEY_INPUT", loop)
-        for name in (
-            "GITHUB_ENV",
-            "GITHUB_PATH",
-            "GITHUB_OUTPUT",
-            "GITHUB_STEP_SUMMARY",
-            "ACTIONS_RUNTIME_TOKEN",
-            "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
-            "ACTIONS_ID_TOKEN_REQUEST_URL",
-        ):
-            self.assertIn(f"-u {name}", loop)
-        self.assertIn('3<<<"$APP_PRIVATE_KEY_INPUT"', loop)
-        self.assertIn('4<<<"$GITHUB_OUTPUT"', loop)
-        self.assertIn('APP_PRIVATE_KEY_MATERIAL="$(cat <&3)"', loop)
-        self.assertIn('GITKEEPR_OUTPUT_PATH="$(cat <&4)"', loop)
-        self.assertIn("exec 3<&-", loop)
-        self.assertIn("exec 4<&-", loop)
-        self.assertIn('AGENT_PATH="$PATH"', loop)
-        self.assertIn('OPENCODE_BIN="$(command -v opencode || true)"', loop)
-        self.assertIn('PATH="/usr/bin:/bin"', loop)
-        self.assertLess(loop.index("exec env"), loop.index("base64url()"))
-        self.assertLess(loop.index('PATH="/usr/bin:/bin"'), loop.index("refresh_app_token()"))
-        self.assertNotIn("APP_TOKEN: ${{ steps.app-token.outputs.token }}", loop)
-        self.assertIn('"$GITHUB_API_URL/app/installations/$APP_INSTALLATION_ID/access_tokens"', loop)
-        self.assertIn('"pull_requests":"write"', loop)
-        self.assertIn('"workflows":"write"', loop)
-        self.assertIn('APP_TOKEN_EXPIRES_EPOCH" -le $((now + 300))', loop)
-        self.assertIn("HTTP 401; refreshing and retrying", loop)
-        self.assertIn("curl -q -fsS -X POST", loop)
-        self.assertIn("push_head_with_app_token", loop)
-        self.assertIn("refreshing GitHub App credentials and retrying once", loop)
-        self.assertIn("GIT_CONFIG_GLOBAL=/dev/null", loop)
-        self.assertIn("GIT_CONFIG_SYSTEM=/dev/null", loop)
-        self.assertIn('GIT_ALLOW_PROTOCOL="$protocol"', loop)
-        self.assertIn('GIT_CONFIG_KEY_0="http.${remote_url}.extraHeader"', loop)
-        self.assertIn('push "$remote_url" "HEAD:refs/heads/${HEAD_REF}"', loop)
-        self.assertIn('TRUSTED_GIT_CONFIG_SHA="$(sha256sum "$GIT_CONFIG_PATH"', loop)
-        self.assertEqual(loop.count("assert_agent_git_boundary"), 3)
-        self.assertEqual(
-            loop.count(
-                'env -u APP_PRIVATE_KEY_INPUT -u APP_PRIVATE_KEY_MATERIAL -u APP_TOKEN PATH="$AGENT_PATH" "$OPENCODE_BIN" run'
-            ),
-            2,
-        )
-
-        final_token = CORE.split("- name: Create final GitKeepr App token", 1)[1].split(
-            "- name: Publish result and finalize status", 1
-        )[0]
-        self.assertIn("if: always() && steps.context.outputs.duplicate != 'true'", final_token)
-        self.assertIn("actions/create-github-app-token@", final_token)
-
-        publish = CORE.split("- name: Publish result and finalize status", 1)[1]
-        self.assertIn("steps.final-app-token.outcome == 'success'", publish)
-        self.assertIn("github-token: ${{ steps.final-app-token.outputs.token }}", publish)
-        self.assertNotIn("github-token: ${{ steps.app-token.outputs.token }}", publish)
-
-    def test_agents_are_informed_about_optional_mcp_tools(self):
-        loop = CORE.split("- name: Run Build Review loop", 1)[1]
-        self.assertEqual(
-            loop.count("Context7 and Chrome DevTools MCP tools are available on the runner."),
-            2,
-        )
-        self.assertEqual(
-            loop.count("They are optional tools, not required workflow steps."),
-            2,
-        )
+        self.assertIn('for cycle in $(seq 1 "$GITKEEPR_FINALIZATION_CYCLES")', loop)
 
     def test_build_does_not_own_git_operations(self):
         loop = CORE.split("- name: Run Build Review loop", 1)[1]
@@ -253,77 +93,13 @@ class WorkflowContractTests(unittest.TestCase):
             loop,
         )
         self.assertIn('git -c core.hooksPath=/dev/null commit -m "gitkeepr: build cycle ${cycle}"', loop)
-        self.assertIn('git -c core.hooksPath=/dev/null push "$remote_url"', loop)
+        self.assertIn(
+            'git -c core.hooksPath=/dev/null push \\\n                "--force-with-lease=refs/heads/${HEAD_REF}:${expected}"',
+            loop,
+        )
+        self.assertIn('git_push_once "$expected"', loop)
         self.assertIn("push_head_with_app_token", loop)
         self.assertIn("including one retry with refreshed GitHub App credentials", loop)
-
-    def test_review_is_read_only_and_verdict_is_bound_to_current_head(self):
-        loop = CORE.split("- name: Run Build Review loop", 1)[1]
-        self.assertIn("Do not edit repository files.", loop)
-        self.assertIn("gitkeepr-system-review:v1 head=${current_head} verdict=continue", loop)
-        self.assertIn("gitkeepr-system-review:v1 head=${current_head} verdict=pass", loop)
-        self.assertIn('git diff --exit-code || block "Review agent modified tracked repository files', loop)
-        self.assertIn("review.count(\"<!-- gitkeepr-system-review:v1\") != 1", loop)
-
-    def test_new_continue_review_gets_build_opportunity_before_no_progress_block(self):
-        loop = CORE.split("- name: Run Build Review loop", 1)[1]
-        self.assertIn("build_had_continue_review=false", loop)
-        self.assertIn(
-            'grep -Fq "<!-- gitkeepr-system-review:v1 head=${start_head} verdict=continue -->"',
-            loop,
-        )
-        self.assertIn(
-            'python3 -c \'import pathlib, sys; previous = pathlib.Path(sys.argv[1]).read_text().strip(); current = pathlib.Path(sys.argv[2]).read_text().strip(); raise SystemExit(0 if previous == current else 1)\' "$review_context" "$review_file"',
-            loop,
-        )
-        self.assertIn("read_text().strip()", loop)
-        self.assertIn(
-            'if [[ "$build_had_continue_review" == "true" && "$current_head" == "$start_head" && "$review_unchanged" == "true" ]]',
-            loop,
-        )
-        self.assertIn("review_unchanged=false", loop)
-        self.assertIn("review_unchanged=true", loop)
-        self.assertNotIn(
-            'if [[ "$changed" == "false" || "$current_head" == "$start_head" ]]',
-            loop,
-        )
-        self.assertIn('review_context="$review_file"', loop)
-        self.assertIn("stopping to avoid an infinite loop", loop)
-        self.assertIn("exhausted GITKEEPR_MAX_CYCLES", loop)
-        self.assertIn('set_gitkeepr_status "gitkeepr:building"', loop)
-        self.assertIn('set_gitkeepr_status "gitkeepr:reviewing"', loop)
-
-    def test_review_comparison_ignores_only_trailing_formatting(self):
-        loop = CORE.split("- name: Run Build Review loop", 1)[1]
-        match = re.search(
-            r'''python3 -c '(?P<script>[^']+)' "\$review_context" "\$review_file"''',
-            loop,
-        )
-        self.assertIsNotNone(match)
-        comparison_script = match.group("script")
-
-        with tempfile.TemporaryDirectory() as directory:
-            previous = Path(directory) / "previous.md"
-            current = Path(directory) / "current.md"
-            previous.write_text("review body\n")
-            current.write_text("review body\n\n")
-
-            result = subprocess.run(
-                [sys.executable, "-c", comparison_script, str(previous), str(current)],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-
-            current.write_text("changed review body\n")
-            result = subprocess.run(
-                [sys.executable, "-c", comparison_script, str(previous), str(current)],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertNotEqual(result.returncode, 0)
 
     def test_build_review_run_block_is_valid_bash(self):
         step = CORE.split("      - name: Run Build Review loop", 1)[1].split(
@@ -345,115 +121,6 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("python3 -m unittest discover -s tests -v", CORE)
         self.assertIn("Run the relevant tests for the repository and task.", CORE)
 
-    def test_successful_handling_writes_processed_marker_only_in_success_path(self):
-        publish = CORE.split("- name: Publish result and finalize status", 1)[1]
-        self.assertIn("PR_NUMBER: ${{ inputs.pr_number }}", publish)
-        self.assertIn("const prNumber = Number(process.env.PR_NUMBER)", publish)
-        self.assertIn("const succeeded = process.env.LOOP_OUTCOME === 'success'", publish)
-        self.assertIn("<!-- gitkeepr-trigger:v1 key=${triggerKey} -->", publish)
-        success_block = publish.split("if (succeeded) {", 1)[1].split(
-            "for (const file of reviewFiles)", 1
-        )[0]
-        self.assertIn("triggerMarker", success_block)
-        failure_block = publish.split("for (const file of reviewFiles)", 1)[1]
-        self.assertNotIn("triggerMarker", failure_block.split("let message =", 1)[0])
-        self.assertIn("gitkeepr-system-blocked:v1", failure_block)
-
-    def test_direct_comment_reply_preserves_unresolved_review_status(self):
-        authorize = CORE.split("- name: Resolve and authorize trigger", 1)[1].split(
-            "- name: Duplicate trigger already handled", 1
-        )[0]
-        self.assertIn("const stableStatuses = new Set(['gitkeepr:waiting-human', 'gitkeepr:blocked'])", authorize)
-        self.assertIn("core.setOutput('prior_status', priorStatus)", authorize)
-        self.assertIn("core.setOutput('initial_review_verdict', initialReviewVerdict)", authorize)
-
-        loop = CORE.split("- name: Run Build Review loop", 1)[1]
-        self.assertIn(
-            'if [[ "$changed" == "false" && "$TRIGGER_KIND" == "comment" && "$cycle" -eq 1 ]]',
-            loop,
-        )
-        self.assertIn('if [[ "$INITIAL_REVIEW_VERDICT" == "continue" ]]', loop)
-        self.assertIn('final_status="gitkeepr:blocked"', loop)
-        self.assertIn('printf \'final_status=%s\\n\' "$final_status" >> "$GITKEEPR_OUTPUT_PATH"', loop)
-        self.assertIn('cp "$build_text_file" "$DIRECT_REPLY_FILE"', loop)
-
-        publish = CORE.split("- name: Publish result and finalize status", 1)[1]
-        self.assertIn("REQUESTED_FINAL_STATUS: ${{ steps.loop.outputs.final_status }}", publish)
-        self.assertIn("gitkeepr-system-reply:v1", publish)
-
-    def test_initial_review_marker_requires_gitkeepr_bot_provenance(self):
-        authorize = CORE.split("- name: Resolve and authorize trigger", 1)[1].split(
-            "- name: Duplicate trigger already handled", 1
-        )[0]
-        marker_lookup = authorize.split("const reviewPrefix", 1)[1].split(
-            "core.setOutput('prior_status'", 1
-        )[0]
-        provenance = "loginOf(comment) === process.env.BOT_LOGIN"
-        self.assertIn(provenance, marker_lookup)
-        reply_marker = (
-            r"const systemReplyMarker = /(?:^|\n\n)<!-- gitkeepr-system-reply:v1 "
-            r"source-comment=\d+ head=[0-9a-f]{40} -->(?=\n\n|$)/"
-        )
-        self.assertIn(reply_marker, marker_lookup)
-        self.assertIn("!systemReplyMarker.test(body)", marker_lookup)
-        self.assertLess(
-            marker_lookup.index(provenance),
-            marker_lookup.index("body.includes(reviewPrefix)"),
-        )
-        self.assertLess(
-            marker_lookup.index("body.includes(reviewPrefix)"),
-            marker_lookup.index("!systemReplyMarker.test(body)"),
-        )
-
-        reply_pattern = re.compile(
-            r"(?:^|\n\n)<!-- gitkeepr-system-reply:v1 source-comment=\d+ "
-            r"head=[0-9a-f]{40} -->(?=\n\n|$)"
-        )
-        self.assertIsNone(reply_pattern.search("A review mentions <!-- gitkeepr-system-reply:v1.\n"))
-        self.assertIsNotNone(
-            reply_pattern.search(
-                "Review body\n\n"
-                "<!-- gitkeepr-system-reply:v1 source-comment=123 head="
-                "0123456789abcdef0123456789abcdef01234567 -->\n\n"
-                "<!-- gitkeepr-trigger:v1 key=comment:123 -->"
-            )
-        )
-
-    def test_comment_only_status_transition_prioritizes_review_verdict_then_prior_status(self):
-        loop = CORE.split("- name: Run Build Review loop", 1)[1]
-        transition = loop.split(
-            'if [[ "$changed" == "false" && "$TRIGGER_KIND" == "comment" && "$cycle" -eq 1 ]]',
-            1,
-        )[1].split("printf 'final_status=%s", 1)[0]
-
-        continue_transition = transition.index('if [[ "$INITIAL_REVIEW_VERDICT" == "continue" ]]')
-        pass_transition = transition.index('elif [[ "$INITIAL_REVIEW_VERDICT" == "pass" ]]')
-        prior_transition = transition.index(
-            'elif [[ "$PRIOR_STATUS" == "gitkeepr:blocked" || "$PRIOR_STATUS" == "gitkeepr:waiting-human" ]]'
-        )
-        self.assertLess(continue_transition, pass_transition)
-        self.assertLess(pass_transition, prior_transition)
-        self.assertIn('final_status="gitkeepr:blocked"', transition)
-        self.assertIn('final_status="gitkeepr:waiting-human"', transition)
-        self.assertIn('final_status="$PRIOR_STATUS"', transition)
-
-    def test_final_status_accepts_preserved_stable_status_only_on_success(self):
-        publish = CORE.split("- name: Publish result and finalize status", 1)[1]
-        self.assertIn("const requestedFinalStatus = String(process.env.REQUESTED_FINAL_STATUS || '')", publish)
-        self.assertIn(
-            "const allowedFinalStatuses = new Set(['gitkeepr:waiting-human', 'gitkeepr:blocked'])",
-            publish,
-        )
-        self.assertIn(
-            "const target = succeeded && allowedFinalStatuses.has(requestedFinalStatus)",
-            publish,
-        )
-        self.assertIn(
-            ": succeeded ? 'gitkeepr:waiting-human' : 'gitkeepr:blocked'",
-            publish,
-        )
-
-
     def test_third_party_actions_are_pinned_in_executing_workflows(self):
         expected = (
             "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7",
@@ -465,6 +132,159 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertIn(pin, combined)
         for floating in ("actions/checkout@v7", "actions/github-script@v9", "actions/create-github-app-token@v3"):
             self.assertNotIn(floating, combined)
+
+    def test_activation_is_explicit_only(self):
+        self.assertIn("issue_comment:", CALLER)
+        self.assertIn("workflow_dispatch:", CALLER)
+        self.assertNotIn("pull_request:", CALLER)
+        self.assertNotIn("pull_request_review:", CALLER)
+        self.assertIn("github.event.comment.body == '/gitkeepr run'", CALLER)
+        self.assertIn("github.event.comment.user.type != 'Bot'", CALLER)
+        self.assertIn('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]', CALLER)
+        self.assertIn("issue_comment:", SELF_GATE)
+        self.assertIn("workflow_dispatch:", SELF_GATE)
+        self.assertNotIn("pull_request:", SELF_GATE)
+        self.assertNotIn("pull_request_review:", SELF_GATE)
+        self.assertIn("github.event.comment.body == '/gitkeepr run'", SELF_GATE)
+
+    def test_core_requires_exact_command_and_same_repository(self):
+        authorize = CORE.split("- name: Resolve and authorize trigger", 1)[1].split(
+            "- name: Deprecated automatic trigger ignored", 1
+        )[0]
+        self.assertIn("pr.head.repo?.full_name !== expectedRepo", authorize)
+        self.assertIn("isTrustedHuman", authorize)
+        self.assertIn("String(comment.body || '').trim() !== '/gitkeepr run'", authorize)
+        self.assertIn("Ignoring trusted non-command comment dispatched by the legacy v0.1 self-development gate", authorize)
+        self.assertIn("core.setOutput('skip', 'true')", authorize)
+        self.assertIn("triggerKey = `command:${comment.id}`", authorize)
+        self.assertIn("<!-- gitkeepr-trigger:v2 key=${triggerKey} -->", authorize)
+        self.assertIn("body === '/gitkeepr run'", authorize)
+
+    def test_legacy_v01_trusted_non_command_comment_is_a_noop(self):
+        authorize = CORE.split("- name: Resolve and authorize trigger", 1)[1].split(
+            "- name: Deprecated automatic trigger ignored", 1
+        )[0]
+        self.assertIn("Trigger comment is not from a trusted human collaborator", authorize)
+        self.assertIn("Ignoring trusted non-command comment dispatched by the legacy v0.1 self-development gate", authorize)
+        self.assertIn("core.setOutput('skip', 'true')", authorize)
+        self.assertIn("core.setOutput('duplicate', 'false')", authorize)
+
+    def test_legacy_automatic_trigger_kinds_are_transition_noops(self):
+        authorize = CORE.split("- name: Resolve and authorize trigger", 1)[1].split(
+            "- name: Deprecated automatic trigger ignored", 1
+        )[0]
+        self.assertIn("const legacyKinds = new Set(['pr_opened', 'pr_sync', 'review'])", authorize)
+        self.assertIn("core.setOutput('skip', 'true')", authorize)
+        self.assertIn("Ignoring deprecated automatic GitKeepr trigger kind", authorize)
+
+    def test_build_is_a_full_bounded_finalization_turn(self):
+        loop = CORE.split("- name: Run Build Review loop", 1)[1]
+        self.assertIn("This is a bounded finalization run.", loop)
+        self.assertIn("Resolve all safely actionable remaining work", loop)
+        self.assertIn("Do not artificially limit yourself to one planned task.", loop)
+        self.assertNotIn("implement only the first unfinished logical task", loop)
+        self.assertIn("result=needs-supervisor", loop)
+        self.assertIn("supervisor action is required", loop)
+        self.assertNotIn("stopping to avoid an infinite loop", loop)
+        self.assertNotIn("exhausted GITKEEPR_FINALIZATION_CYCLES", loop)
+
+    def test_pr_head_ownership_supersedes_stale_runs(self):
+        loop = CORE.split("- name: Run Build Review loop", 1)[1].split(
+            "- name: Create final GitKeepr App token", 1
+        )[0]
+        self.assertIn("git_remote_head_once()", loop)
+        self.assertIn('git -c core.hooksPath=/dev/null ls-remote "$remote_url" "refs/heads/${HEAD_REF}"', loop)
+        self.assertIn("ensure_remote_head()", loop)
+        self.assertIn('ensure_remote_head "$start_head"', loop)
+        self.assertIn('push_head_with_app_token "$start_head"', loop)
+        self.assertIn('ensure_remote_head "$current_head"', loop)
+        self.assertIn("result=superseded", loop)
+        final_token = CORE.split("- name: Create final GitKeepr App token", 1)[1].split(
+            "- name: Publish result and finalize status", 1
+        )[0]
+        self.assertIn("steps.loop.outputs.result != 'superseded'", final_token)
+        publish = CORE.split("- name: Publish result and finalize status", 1)[1]
+        self.assertIn("if (pr.head.sha !== resultHead)", publish)
+        self.assertIn("no PR state will be changed", publish)
+        self.assertIn("const assertCurrentHead = async operation", publish)
+        self.assertIn("abortIfSuperseded(`removing ${label}`)", publish)
+        self.assertIn("abortIfSuperseded(`adding ${target}`)", publish)
+        self.assertIn("abortIfSuperseded(`posting review ${reviewFiles[index]}`)", publish)
+        self.assertIn("abortIfSuperseded('posting the completion comment')", publish)
+        self.assertIn("const createdCommentIds = []", publish)
+        self.assertIn("const restorePublication = async ()", publish)
+        self.assertIn("github.rest.issues.deleteComment", publish)
+        self.assertIn("originalStatusLabels", publish)
+
+    def test_only_completed_logical_results_are_durable_labels(self):
+        ensure = CORE.split("- name: Ensure GitKeepr status labels", 1)[1].split(
+            "- name: Check out exact PR head", 1
+        )[0]
+        self.assertIn("gitkeepr:ready", ensure)
+        self.assertIn("gitkeepr:needs-supervisor", ensure)
+        for old in ("gitkeepr:building", "gitkeepr:reviewing", "gitkeepr:waiting-human", "gitkeepr:blocked"):
+            self.assertNotIn(old, ensure)
+        loop = CORE.split("- name: Run Build Review loop", 1)[1].split(
+            "- name: Create final GitKeepr App token", 1
+        )[0]
+        self.assertNotIn("set_gitkeepr_status", loop)
+        publish = CORE.split("- name: Publish result and finalize status", 1)[1]
+        self.assertIn("ready: 'gitkeepr:ready'", publish)
+        self.assertIn("'needs-supervisor': 'gitkeepr:needs-supervisor'", publish)
+
+    def test_status_labels_are_not_provisioned_for_noop_or_duplicate_triggers(self):
+        authorize = CORE.index("- name: Resolve and authorize trigger")
+        ensure = CORE.index("- name: Ensure GitKeepr status labels")
+        self.assertLess(authorize, ensure)
+        ensure_step = CORE[ensure:].split("- name: Check out exact PR head", 1)[0]
+        self.assertIn("steps.context.outputs.skip != 'true'", ensure_step)
+        self.assertIn("steps.context.outputs.duplicate != 'true'", ensure_step)
+
+    def test_technical_failures_do_not_publish_persistent_failure_state(self):
+        final_token = CORE.split("- name: Create final GitKeepr App token", 1)[1].split(
+            "- name: Publish result and finalize status", 1
+        )[0]
+        self.assertIn("steps.loop.outcome == 'success'", final_token)
+        publish = CORE.split("- name: Publish result and finalize status", 1)[1]
+        self.assertNotIn("gitkeepr-system-blocked", publish)
+        self.assertNotIn("GitKeepr loop stopped", publish)
+
+    def test_review_is_read_only_and_head_bound(self):
+        loop = CORE.split("- name: Run Build Review loop", 1)[1]
+        self.assertIn("Do not edit repository files.", loop)
+        self.assertIn("gitkeepr-system-review:v1 head=${current_head} verdict=continue", loop)
+        self.assertIn("gitkeepr-system-review:v1 head=${current_head} verdict=pass", loop)
+        self.assertIn('git diff --exit-code || fail "Review agent modified tracked repository files', loop)
+        self.assertIn('review.count("<!-- gitkeepr-system-review:v1") != 1', loop)
+
+    def test_credential_refresh_and_agent_secret_isolation_remain(self):
+        loop = CORE.split("- name: Run Build Review loop", 1)[1].split(
+            "- name: Create final GitKeepr App token", 1
+        )[0]
+        self.assertIn("GITKEEPR_SANITIZED", loop)
+        self.assertIn("-u APP_PRIVATE_KEY_INPUT", loop)
+        self.assertIn("-u APP_PRIVATE_KEY_MATERIAL", loop)
+        self.assertIn("-u APP_TOKEN", loop)
+        self.assertIn('3<<<"$APP_PRIVATE_KEY_INPUT"', loop)
+        self.assertIn('APP_PRIVATE_KEY_MATERIAL="$(cat <&3)"', loop)
+        self.assertIn('"$GITHUB_API_URL/app/installations/$APP_INSTALLATION_ID/access_tokens"', loop)
+        self.assertIn('APP_TOKEN_EXPIRES_EPOCH" -le $((now + 300))', loop)
+        self.assertIn("refreshing GitHub App credentials and retrying once", loop)
+        invocation = 'env -u APP_PRIVATE_KEY_INPUT -u APP_PRIVATE_KEY_MATERIAL -u APP_TOKEN PATH="$AGENT_PATH" "$OPENCODE_BIN" run'
+        self.assertEqual(loop.count(invocation), 2)
+
+    def test_remote_head_probe_has_data_only_stdout(self):
+        loop = CORE.split("- name: Run Build Review loop", 1)[1].split(
+            "- name: Create final GitKeepr App token", 1
+        )[0]
+        self.assertIn('echo "::add-mask::$APP_TOKEN" >&2', loop)
+        self.assertIn('echo "GitKeepr refreshed GitHub App credentials (expires $expires_at)." >&2', loop)
+        self.assertIn('actual="$(remote_head_with_app_token)"', loop)
+
+    def test_optional_mcp_tools_remain_available_to_both_agents(self):
+        loop = CORE.split("- name: Run Build Review loop", 1)[1]
+        self.assertEqual(loop.count("Context7 and Chrome DevTools MCP tools are available on the runner."), 2)
+        self.assertEqual(loop.count("optional tools, not required workflow steps"), 2)
 
 
 if __name__ == "__main__":

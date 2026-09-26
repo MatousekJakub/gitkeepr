@@ -15,13 +15,29 @@ The previous private proof-of-concept used:
 - GitHub App mutations rather than the default Actions token;
 - Build/Review loop with max cycles, no-progress protection, status labels, deterministic trigger keys, blocked UX, trusted discussion context, and direct-reply handling for comments that need no code change.
 
+## v0.2 operational lessons
+
+The v0.1.x history showed that most practical failures came from orchestration around otherwise useful Build/Review agents:
+
+- automatic `synchronize` caused unrelated human/ChatGPT commits to start or queue work;
+- ambient comment/review triggers required special direct-reply and status-preservation logic;
+- no-progress detection had to distinguish changed findings on the same HEAD and created several state-machine edge cases;
+- Copilot review identities/event delivery added trigger complexity without meaningful UX benefit;
+- long loops increased token usage and exposed credential lifetime/finalization failures;
+- transient labels could become stale after interrupted runs;
+- external pushes could race a run that still believed it owned the previous HEAD.
+
+v0.2 responds by using explicit activation, a default two-cycle budget, external supervision, durable result labels only, and optimistic PR-HEAD ownership.
+
+A supervisor checkpoint is not a failure. `needs-supervisor` means the worker used its bounded budget and deliberately returned control to ChatGPT/human supervision.
+
 ## Important behavior learned from GitHub/Copilot
 
 - A normal human `pull_request_review: submitted` event can trigger Actions.
 - Real Copilot review did **not** reliably produce the repository `pull_request_review` workflow run expected by the PoC.
 - `workflow_run` against Copilot's internal review workflow was not a useful trigger.
 - Copilot inline-comment events can have separate approval/security behavior and are not the V1 automation path.
-- Therefore GitKeepr does not depend on Copilot emitting a trigger. Copilot review remains trusted discussion context and a later trusted comment such as "fix the issues Copilot found" is the reliable activation path.
+- Therefore GitKeepr does not depend on Copilot emitting a trigger. Copilot review is trusted discussion context and an explicit `/gitkeepr run` is the activation path.
 - Copilot findings may be stale; agents must verify them against current HEAD before acting.
 
 ## Idempotence lesson

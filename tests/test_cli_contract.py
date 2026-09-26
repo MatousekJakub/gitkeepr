@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused static tests for GitKeepr CLI safety and V1 lifecycle contracts."""
+"""Focused static tests for GitKeepr CLI safety and lifecycle contracts."""
 from pathlib import Path
 import subprocess
 import tempfile
@@ -23,6 +23,11 @@ class CliContractTests(unittest.TestCase):
         self.assertIn('releases/download/${TAG}', INSTALLER)
         self.assertIn('"$tmp" version', INSTALLER)
 
+    def test_project_init_defaults_to_two_finalization_cycles(self):
+        init = self.function_body("project_init", "project_doctor")
+        self.assertIn('current="$(current_var "$repo" GITKEEPR_FINALIZATION_CYCLES || true)"', init)
+        self.assertIn('max_cycles="$(prompt_value "Finalization cycles" "${current:-2}")"', init)
+        self.assertIn('gh variable set GITKEEPR_FINALIZATION_CYCLES -R "$repo" --body "$max_cycles"', init)
     def test_project_init_never_owns_git_history(self):
         init = self.function_body("project_init", "project_doctor")
         for forbidden in ("git add", "git commit", "git push", "git reset", "git stash"):
@@ -264,6 +269,14 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("./svc.sh install", add)
         self.assertIn("./svc.sh start", add)
         self.assertIn('"$status" == "online"', add)
+
+    def test_runner_validation_rejects_invalid_finalization_cycle_budget(self):
+        helper = self.function_body("verify_project_vars", "sync_app_credentials")
+        self.assertIn(
+            '[[ "$name" == "GITKEEPR_FINALIZATION_CYCLES" && ! "$value" =~ ^[1-9][0-9]*$ ]]',
+            helper,
+        )
+        self.assertIn("must be a positive integer", helper)
 
     def test_runner_add_healthy_rerun_resyncs_without_reconfigure(self):
         add = self.function_body("runner_add", "runner_remove")

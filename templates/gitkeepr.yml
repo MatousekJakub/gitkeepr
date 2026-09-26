@@ -1,10 +1,6 @@
 name: GitKeepr
 
 on:
-  pull_request:
-    types: [opened, synchronize]
-  pull_request_review:
-    types: [submitted]
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -21,25 +17,15 @@ jobs:
   gitkeepr:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
-       (github.event.action == 'opened' ||
-        (github.event.action == 'synchronize' && github.event.sender.type != 'Bot'))) ||
-      (github.event_name == 'pull_request_review' &&
-       github.event.action == 'submitted' &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
-       (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association) ||
-         github.event.review.user.login == 'copilot-pull-request-reviewer[bot]')) ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request != null &&
        github.event.comment.user.type != 'Bot' &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
-       !contains(github.event.comment.body, '<!-- gitkeepr:no-build -->') &&
-       !contains(github.event.comment.body, '<!-- gitkeepr-system:'))
+       github.event.comment.body == '/gitkeepr run')
     uses: MatousekJakub/gitkeepr/.github/workflows/pr-loop.yml@v0.1.1
     with:
-      pr_number: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event_name == 'pull_request_review' && github.event.pull_request.number || github.event_name == 'issue_comment' && github.event.issue.number || inputs.pr_number }}
-      trigger_kind: ${{ github.event_name == 'issue_comment' && 'comment' || github.event_name == 'pull_request_review' && 'review' || github.event_name == 'pull_request' && github.event.action == 'synchronize' && 'pr_sync' || github.event_name == 'pull_request' && 'pr_opened' || 'manual' }}
-      trigger_source_id: ${{ github.event_name == 'issue_comment' && format('{0}', github.event.comment.id) || github.event_name == 'pull_request_review' && format('{0}', github.event.review.id) || '' }}
+      pr_number: ${{ github.event_name == 'issue_comment' && github.event.issue.number || inputs.pr_number }}
+      trigger_kind: ${{ github.event_name == 'issue_comment' && 'comment' || 'manual' }}
+      trigger_source_id: ${{ github.event_name == 'issue_comment' && format('{0}', github.event.comment.id) || '' }}
     secrets:
       app_private_key: ${{ secrets.GITKEEPR_APP_PRIVATE_KEY }}

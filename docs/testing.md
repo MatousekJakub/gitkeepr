@@ -12,42 +12,62 @@ bash -n bin/gitkeepr
 bash -n install.sh
 ```
 
-The tests protect the high-value contracts: project-init mutation boundaries, server/runner lifecycle structure, trust-before-checkout, same-repository execution, configured Build/Review models, exact-HEAD Review verdicts, max-cycle/no-progress behavior, success-only trigger markers, public self-gate behavior, release-version consistency and prepare-release dry runs, and full-SHA third-party Action pinning.
+The tests protect the high-value contracts: release-pinned installation, trust-before-checkout, explicit-only triggering, same-repository public self-development, configured Build/Review models, exact-HEAD Review verdicts, bounded-cycle outcomes, PR-HEAD ownership/supersede behavior, success-only trigger markers, credential isolation/refresh, and full-SHA third-party Action pinning.
 
-Ordinary repository CI remains independent of the AI Review verdict. GitKeepr V1 deliberately does not impose a universal deterministic verification command on target projects; Build chooses relevant tests for the current repository/task.
+Ordinary repository CI remains independent of the AI Review verdict. GitKeepr does not impose a universal verification command on target projects; Build chooses relevant tests for the current repository/task.
 
-## Live smoke checklist
+## v0.2 implementation-PR live evidence
 
-### Server
+The breaking v0.2 implementation was dogfooded on PR #13 on the actual persistent VPS runner on 2026-09-26.
 
-1. Install/update the CLI from the published GitHub Release asset and verify `gitkeepr version`.
-2. Run `gitkeepr server init`.
-3. Run `gitkeepr server doctor`.
-4. Repeat `server init` and confirm existing runner services remain untouched.
+Observed behavior:
 
-### Private target repository
+- an exact trusted `/gitkeepr run` passed through the public self-development gate and dispatched the candidate branch workflow;
+- ordinary pushes made while developing the PR started CI only and did not start additional GitKeepr runs;
+- run #25 began on one PR HEAD, the branch was changed externally, and the stale worker exited as `superseded` without publishing stale result state;
+- a fresh explicit run then continued normally on the newer HEAD;
+- run #27 used `GITKEEPR_FINALIZATION_CYCLES=2`, executed exactly two Build -> Review cycles, and stopped successfully as `gitkeepr:needs-supervisor` after two `CONTINUE` verdicts;
+- Build-owned workflow commits triggered CI but did not recursively trigger GitKeepr;
+- the finalizer published the `gitkeepr:needs-supervisor` result label on the reviewed current HEAD;
+- current-HEAD contract CI and shell syntax checks passed.
 
-1. Add the repo to the GitHub App.
-2. Run `gitkeepr init`, inspect and commit the caller.
-3. Run `gitkeepr runner add owner/repo`.
-4. Run `gitkeepr doctor`; expect caller, variables, App Client ID/secret, and an online `gitkeepr` runner.
-5. Repeat `runner add`; expect no healthy-runner re-registration.
-6. Exercise disposable unhealthy/reconfigure and remove paths.
+These observations are sufficient to validate the new v0.2 behavioral contract for merging the implementation PR. They do **not** mean every release/rollout smoke scenario below has been exercised.
 
-### PR loop
+## Pre-release / rollout smoke checklist
 
-Verify PR-opened Build, App push, Review CONTINUE/PASS, multi-cycle progress, PASS → `gitkeepr:waiting-human`, no-code direct reply, no-progress → blocked, failure without processed marker, duplicate-trigger skip, no-build suppression, and bot-synchronize suppression.
+Before calling a v0.2 release operationally validated, exercise the remaining paths that are useful to validate independently of the implementation PR.
 
-### Public GitKeepr self-development
+### Explicit triggering
 
-Public self-development PR events are first handled by the GitHub-hosted
-`.github/workflows/self-gate.yml`. Only same-repository PRs may dispatch
-`.github/workflows/pr-loop.yml` to the persistent self-hosted runner; fork PRs
-must never reach that runner.
+- [x] Exact trusted `/gitkeepr run` dispatches one bounded run.
+- [x] Development pushes do not automatically start GitKeepr.
+- [ ] After the v0.2 default-branch gate is active, confirm an ordinary trusted comment/review only produces a skipped gate job and never reaches the persistent runner.
+- [ ] Redeliver the same successful command trigger and confirm processed-trigger idempotence skips model work.
+- [ ] Verify the public self-gate `workflow_dispatch` manual path.
 
-Live validation confirmed both paths: a same-repository PR dispatched the candidate
-`pr-loop.yml` and completed Build → Review → CONTINUE → Build → Review → PASS on
-the persistent runner, while a fork PR was stopped by the GitHub-hosted self-gate
-with no `workflow_dispatch` created for the persistent runner.
+### Bounded loop
 
-Record only observed failures in `docs/known-issues.md`.
+- [ ] Exercise Build -> Review `PASS` and expect `gitkeepr:ready`.
+- [ ] Exercise Build -> Review `CONTINUE` -> Build -> Review `PASS`.
+- [x] Exercise two Review `CONTINUE` verdicts and expect a successful workflow with `gitkeepr:needs-supervisor`.
+- [x] Confirm the live run uses the default two-cycle budget when `GITKEEPR_FINALIZATION_CYCLES` is not configured.
+
+### HEAD ownership
+
+- [x] Start GitKeepr at HEAD A and externally push HEAD B while Build or Review is running.
+- [x] Confirm the stale run becomes `superseded`.
+- [x] Confirm it does not overwrite HEAD B or publish stale Review output/result state.
+- [x] Start a fresh explicit run on the newer HEAD and confirm normal operation.
+
+### Failures
+
+- [ ] Intentionally exercise a harness/provider failure and confirm Actions fails without a persistent failure label or successful trigger marker.
+- [ ] Intentionally exercise invalid Review output and confirm the same.
+- [ ] Exercise an unrecoverable push/auth failure only in a safe test repository if useful; do not damage the working GitHub App installation merely to satisfy a checklist.
+
+### Public self-development / isolation
+
+- [x] Same-repository explicit commands reach the persistent runner through the GitHub-hosted gate.
+- [ ] Reconfirm fork PR isolation after the v0.2 gate is on the default branch.
+
+Record only observed failures in `docs/known-issues.md`. Unchecked release smoke items are rollout validation, not evidence that the implementation PR is incomplete.
