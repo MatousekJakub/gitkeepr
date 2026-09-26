@@ -6,9 +6,7 @@ The intended v0.2 workflow is ChatGPT/user first, GitHub PR/branch as the durabl
 
 ## Status
 
-The latest released line is v0.1.x. `main` is developing the breaking v0.2 bounded-finalizer behavior.
-
-v0.2 defaults to two Build -> Review cycles and finishes as `gitkeepr:ready` or `gitkeepr:needs-supervisor`. If another actor changes the PR branch during a run, the stale run becomes `superseded` instead of racing the newer work.
+GitKeepr v0.2 is the bounded-finalizer release line. It defaults to two Build -> Review cycles and finishes as `gitkeepr:ready` or `gitkeepr:needs-supervisor`. If another actor changes the PR branch during a run, the stale run becomes `superseded` instead of racing the newer work.
 
 Standard target repositories are **private and trusted**. GitKeepr itself is public and uses a separate GitHub-hosted self-development gate so fork code never reaches the persistent runner.
 
