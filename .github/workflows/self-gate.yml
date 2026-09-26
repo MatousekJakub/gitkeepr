@@ -1,10 +1,6 @@
 name: GitKeepr Self-Development Gate
 
 on:
-  pull_request:
-    types: [opened, synchronize]
-  pull_request_review:
-    types: [submitted]
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -25,17 +21,11 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       (github.event.action == 'opened' ||
-        (github.event.action == 'synchronize' && github.event.sender.type != 'Bot'))) ||
-      (github.event_name == 'pull_request_review' &&
-       github.event.action == 'submitted') ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request != null &&
        github.event.comment.user.type != 'Bot' &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
-       !contains(github.event.comment.body, '<!-- gitkeepr:no-build -->') &&
-       !contains(github.event.comment.body, '<!-- gitkeepr-system:'))
+       github.event.comment.body == '/gitkeepr run')
     steps:
       - name: Verify same-repository PR and dispatch candidate core
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
@@ -48,9 +38,7 @@ jobs:
             const payload = context.payload
             const prNumber = event === 'workflow_dispatch'
               ? Number(process.env.MANUAL_PR_NUMBER)
-              : event === 'issue_comment'
-                ? Number(payload.issue?.number)
-                : Number(payload.pull_request?.number)
+              : Number(payload.issue?.number)
 
             if (!Number.isSafeInteger(prNumber) || prNumber < 1) {
               core.setFailed('Could not resolve a valid pull request number')
@@ -67,43 +55,20 @@ jobs:
               return
             }
 
-            if (event === 'pull_request_review') {
-              const reviewId = Number(payload.review?.id)
-              if (!Number.isSafeInteger(reviewId) || reviewId < 1) {
-                core.setFailed('Could not resolve a valid pull request review ID')
-                return
-              }
-
-              const { data: review } = await github.rest.pulls.getReview({
-                ...context.repo,
-                pull_number: prNumber,
-                review_id: reviewId,
-              })
-              const login = String(review.user?.login || '').toLowerCase()
-              const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR'])
-              const trustedHuman =
-                review.user?.type !== 'Bot' &&
-                trustedAssociations.has(String(review.author_association || '').toUpperCase())
-              const trustedCopilot =
-                review.user?.type === 'Bot' &&
-                (login === 'copilot' || login === 'copilot-pull-request-reviewer[bot]')
-
-              if (!trustedHuman && !trustedCopilot) {
-                core.notice(`Ignoring untrusted review from @${review.user?.login || '(unknown)'}`)
-                return
-              }
-            }
-
             let triggerKind = 'manual'
             let triggerSourceId = ''
-            if (event === 'pull_request') {
-              triggerKind = payload.action === 'synchronize' ? 'pr_sync' : 'pr_opened'
-            } else if (event === 'pull_request_review') {
-              triggerKind = 'review'
-              triggerSourceId = String(payload.review?.id || '')
-            } else if (event === 'issue_comment') {
+            if (event === 'issue_comment') {
+              const comment = payload.comment
+              const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR'])
+              const trustedHuman =
+                comment?.user?.type !== 'Bot' &&
+                trustedAssociations.has(String(comment?.author_association || '').toUpperCase())
+              if (!trustedHuman || String(comment?.body || '').trim() !== '/gitkeepr run') {
+                core.notice('Ignoring non-command or untrusted issue comment')
+                return
+              }
               triggerKind = 'comment'
-              triggerSourceId = String(payload.comment?.id || '')
+              triggerSourceId = String(comment?.id || '')
             }
 
             await github.rest.actions.createWorkflowDispatch({
