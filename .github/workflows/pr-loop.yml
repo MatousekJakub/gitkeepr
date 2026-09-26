@@ -417,8 +417,8 @@ jobs:
             [[ -n "$token" && -n "$expires_at" ]] || return 1
             APP_TOKEN="$token"
             APP_TOKEN_EXPIRES_EPOCH="$(date -d "$expires_at" +%s)" || return 1
-            echo "::add-mask::$APP_TOKEN"
-            echo "GitKeepr refreshed GitHub App credentials (expires $expires_at)."
+            echo "::add-mask::$APP_TOKEN" >&2
+            echo "GitKeepr refreshed GitHub App credentials (expires $expires_at)." >&2
           }
 
           ensure_app_token() {
