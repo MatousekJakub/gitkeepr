@@ -16,37 +16,58 @@ The tests protect the high-value contracts: release-pinned installation, trust-b
 
 Ordinary repository CI remains independent of the AI Review verdict. GitKeepr does not impose a universal verification command on target projects; Build chooses relevant tests for the current repository/task.
 
-## v0.2 live smoke checklist
+## v0.2 implementation-PR live evidence
+
+The breaking v0.2 implementation was dogfooded on PR #13 on the actual persistent VPS runner on 2026-09-26.
+
+Observed behavior:
+
+- an exact trusted `/gitkeepr run` passed through the public self-development gate and dispatched the candidate branch workflow;
+- ordinary pushes made while developing the PR started CI only and did not start additional GitKeepr runs;
+- run #25 began on one PR HEAD, the branch was changed externally, and the stale worker exited as `superseded` without publishing stale result state;
+- a fresh explicit run then continued normally on the newer HEAD;
+- run #27 used `GITKEEPR_FINALIZATION_CYCLES=2`, executed exactly two Build -> Review cycles, and stopped successfully as `gitkeepr:needs-supervisor` after two `CONTINUE` verdicts;
+- Build-owned workflow commits triggered CI but did not recursively trigger GitKeepr;
+- the finalizer published the `gitkeepr:needs-supervisor` result label on the reviewed current HEAD;
+- current-HEAD contract CI and shell syntax checks passed.
+
+These observations are sufficient to validate the new v0.2 behavioral contract for merging the implementation PR. They do **not** mean every release/rollout smoke scenario below has been exercised.
+
+## Pre-release / rollout smoke checklist
+
+Before calling a v0.2 release operationally validated, exercise the remaining paths that are useful to validate independently of the implementation PR.
 
 ### Explicit triggering
 
-1. Open a same-repository PR and confirm GitKeepr agent work does not start from PR open alone after the v0.2 gate is active.
-2. Push one or more commits and confirm they do not start GitKeepr.
-3. Add ordinary trusted comments and reviews and confirm they do not start GitKeepr.
-4. Post exact `/gitkeepr run` and confirm one bounded run starts.
-5. Redeliver the same command trigger and confirm processed-trigger idempotence skips model work.
-6. Verify `workflow_dispatch` starts a manual run.
+- [x] Exact trusted `/gitkeepr run` dispatches one bounded run.
+- [x] Development pushes do not automatically start GitKeepr.
+- [ ] After the v0.2 default-branch gate is active, confirm an ordinary trusted comment/review only produces a skipped gate job and never reaches the persistent runner.
+- [ ] Redeliver the same successful command trigger and confirm processed-trigger idempotence skips model work.
+- [ ] Verify the public self-gate `workflow_dispatch` manual path.
 
 ### Bounded loop
 
-1. Exercise Build -> Review PASS and expect `gitkeepr:ready`.
-2. Exercise Build -> Review CONTINUE -> Build -> Review PASS with the default two-cycle budget.
-3. Exercise two Review CONTINUE verdicts and expect a successful workflow with `gitkeepr:needs-supervisor`, not a technical failure.
-4. Confirm Build is asked to resolve all safely actionable remaining work in each turn.
+- [ ] Exercise Build -> Review `PASS` and expect `gitkeepr:ready`.
+- [ ] Exercise Build -> Review `CONTINUE` -> Build -> Review `PASS`.
+- [x] Exercise two Review `CONTINUE` verdicts and expect a successful workflow with `gitkeepr:needs-supervisor`.
+- [x] Confirm the live run uses the default two-cycle budget when `GITKEEPR_FINALIZATION_CYCLES` is not configured.
 
 ### HEAD ownership
 
-1. Start GitKeepr at HEAD A and externally push HEAD B while Build or Review is running.
-2. Confirm the stale run becomes `superseded`.
-3. Confirm it does not overwrite HEAD B, change durable result labels, or publish stale Review output.
-4. Start a fresh explicit run on HEAD B and confirm normal operation.
+- [x] Start GitKeepr at HEAD A and externally push HEAD B while Build or Review is running.
+- [x] Confirm the stale run becomes `superseded`.
+- [x] Confirm it does not overwrite HEAD B or publish stale Review output/result state.
+- [x] Start a fresh explicit run on the newer HEAD and confirm normal operation.
 
 ### Failures
 
-Confirm harness/provider failure, invalid Review output, and unrecoverable push/auth failure produce an Actions failure without writing a persistent failure label or successful trigger marker.
+- [ ] Intentionally exercise a harness/provider failure and confirm Actions fails without a persistent failure label or successful trigger marker.
+- [ ] Intentionally exercise invalid Review output and confirm the same.
+- [ ] Exercise an unrecoverable push/auth failure only in a safe test repository if useful; do not damage the working GitHub App installation merely to satisfy a checklist.
 
-### Public GitKeepr self-development
+### Public self-development / isolation
 
-Confirm the GitHub-hosted gate dispatches only exact trusted `/gitkeepr run` commands or manual dispatch for same-repository PRs. Fork PRs must never reach the persistent runner.
+- [x] Same-repository explicit commands reach the persistent runner through the GitHub-hosted gate.
+- [ ] Reconfirm fork PR isolation after the v0.2 gate is on the default branch.
 
-Record only observed failures in `docs/known-issues.md`.
+Record only observed failures in `docs/known-issues.md`. Unchecked release smoke items are rollout validation, not evidence that the implementation PR is incomplete.
