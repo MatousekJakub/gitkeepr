@@ -719,6 +719,15 @@ jobs:
               return
             }
 
+            const assertCurrentHead = async operation => {
+              const { data: currentPr } = await github.rest.pulls.get({ ...context.repo, pull_number: prNumber })
+              if (currentPr.head.sha !== resultHead) {
+                core.notice(`GitKeepr result for ${resultHead} was superseded before ${operation} by current PR HEAD ${currentPr.head.sha}; aborting publication`)
+                return false
+              }
+              return true
+            }
+
             const statuses = [
               'gitkeepr:ready',
               'gitkeepr:needs-supervisor',
@@ -727,8 +736,14 @@ jobs:
               'gitkeepr:waiting-human',
               'gitkeepr:blocked',
             ]
-            for (const label of statuses) {
-              if (label === target) continue
+            const originalStatusLabels = new Set(
+              (pr.labels || [])
+                .map(label => label.name)
+                .filter(label => statuses.includes(label))
+            )
+            const createdCommentIds = []
+            let statusMutated = false
+            const removeLabel = async label => {
               try {
                 await github.rest.issues.removeLabel({
                   ...context.repo,
@@ -739,11 +754,52 @@ jobs:
                 if (error.status !== 404) throw error
               }
             }
+            const restorePublication = async () => {
+              for (const commentId of createdCommentIds) {
+                try {
+                  await github.rest.issues.deleteComment({
+                    ...context.repo,
+                    comment_id: commentId,
+                  })
+                } catch (error) {
+                  if (error.status !== 404) throw error
+                }
+              }
+              if (!statusMutated) return
+              for (const label of statuses) await removeLabel(label)
+              if (originalStatusLabels.size) {
+                await github.rest.issues.addLabels({
+                  ...context.repo,
+                  issue_number: prNumber,
+                  labels: [...originalStatusLabels],
+                })
+              }
+            }
+            const supersede = async operation => {
+              core.notice(`Rolling back GitKeepr publication after ${operation} detected a newer PR HEAD`)
+              await restorePublication()
+            }
+            const abortIfSuperseded = async operation => {
+              if (await assertCurrentHead(operation)) return false
+              await supersede(operation)
+              return true
+            }
+
+            for (const label of statuses) {
+              if (label === target) continue
+              if (await abortIfSuperseded(`removing ${label}`)) return
+              await removeLabel(label)
+              statusMutated = true
+              if (await abortIfSuperseded(`removing ${label}`)) return
+            }
+            if (await abortIfSuperseded(`adding ${target}`)) return
             await github.rest.issues.addLabels({
               ...context.repo,
               issue_number: prNumber,
               labels: [target],
             })
+            statusMutated = true
+            if (await abortIfSuperseded(`adding ${target}`)) return
 
             const reviewDir = process.env.REVIEW_DIR
             const reviewFiles = fs.existsSync(reviewDir)
@@ -753,21 +809,27 @@ jobs:
 
             if (reviewFiles.length) {
               for (let index = 0; index < reviewFiles.length; index++) {
+                if (await abortIfSuperseded(`posting review ${reviewFiles[index]}`)) return
                 let body = fs.readFileSync(path.join(reviewDir, reviewFiles[index]), 'utf8').trim()
                 if (index === reviewFiles.length - 1) {
                   body = [body, triggerMarker].filter(Boolean).join('\n\n')
                 }
-                await github.rest.issues.createComment({
+                const { data: comment } = await github.rest.issues.createComment({
                   ...context.repo,
                   issue_number: prNumber,
                   body,
                 })
+                createdCommentIds.push(comment.id)
+                if (await abortIfSuperseded(`posting review ${reviewFiles[index]}`)) return
               }
               return
             }
 
-            await github.rest.issues.createComment({
+            if (await abortIfSuperseded('posting the completion comment')) return
+            const { data: comment } = await github.rest.issues.createComment({
               ...context.repo,
               issue_number: prNumber,
               body: [`GitKeepr finished with result: ${result}.`, triggerMarker].join('\n\n'),
             })
+            createdCommentIds.push(comment.id)
+            await abortIfSuperseded('posting the completion comment')

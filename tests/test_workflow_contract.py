@@ -192,6 +192,15 @@ class WorkflowContractTests(unittest.TestCase):
         publish = CORE.split("- name: Publish result and finalize status", 1)[1]
         self.assertIn("if (pr.head.sha !== resultHead)", publish)
         self.assertIn("no PR state will be changed", publish)
+        self.assertIn("const assertCurrentHead = async operation", publish)
+        self.assertIn("abortIfSuperseded(`removing ${label}`)", publish)
+        self.assertIn("abortIfSuperseded(`adding ${target}`)", publish)
+        self.assertIn("abortIfSuperseded(`posting review ${reviewFiles[index]}`)", publish)
+        self.assertIn("abortIfSuperseded('posting the completion comment')", publish)
+        self.assertIn("const createdCommentIds = []", publish)
+        self.assertIn("const restorePublication = async ()", publish)
+        self.assertIn("github.rest.issues.deleteComment", publish)
+        self.assertIn("originalStatusLabels", publish)
 
     def test_only_completed_logical_results_are_durable_labels(self):
         ensure = CORE.split("- name: Ensure GitKeepr status labels", 1)[1].split(
