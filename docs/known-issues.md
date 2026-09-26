@@ -2,15 +2,19 @@
 
 > Automation-owned working list. Add items only when they are actually observed.
 
-There are currently no known V1 implementation blockers or remaining live-validation gaps.
+## v0.2 validation status
 
-Static contract tests and shell syntax checks are green. Live validation on the actual Ubuntu VPS covered:
-- repeated `gitkeepr server init` and `gitkeepr server doctor`;
-- private-repository init/doctor, GitHub App credential sync, runner add, healthy repeat, unhealthy/reconfigure, remove, and clean re-add;
-- real private PR Build → Review → CONTINUE → Build → Review → PASS;
-- bot-synchronize suppression, no-code direct reply, `gitkeepr:no-build` suppression, duplicate-trigger idempotence, no-progress blocking, retryability without a processed marker, and blocked-message deduplication;
-- public GitKeepr self-development through the GitHub-hosted self-gate;
-- same-repository self-development dispatch to the persistent runner, including a Review-detected cleanup cycle before PASS;
-- fork-PR isolation: the self-gate emitted `Ignoring fork PR …; persistent runner will not execute it` and created no `workflow_dispatch` for the persistent runner.
+The v0.2 bounded-finalizer behavior is under implementation and has not yet completed the live smoke matrix in `docs/testing.md`.
 
-GitKeepr V1 is operationally validated for the tested Ubuntu/ARM64 server and repository workflows.
+The following v0.1.x operational lessons are already addressed structurally by the v0.2 design:
+
+- ordinary pushes/reviews/comments no longer start agent work;
+- the default loop budget is reduced from 15 to 2 cycles;
+- unresolved work becomes `gitkeepr:needs-supervisor` instead of requiring a complex blocked/no-progress state machine;
+- transient building/reviewing labels are removed from the state model;
+- external branch movement yields `superseded` rather than a stale push/review race;
+- technical failures are represented by the Actions run rather than a persistent failure label.
+
+GitHub App credential refresh/retry from v0.1.1 remains in place for long-running credentialed operations.
+
+Do not mark v0.2 operationally validated until the explicit-trigger, bounded-loop, supersede, failure, and public self-development smoke cases have run on the actual VPS.
