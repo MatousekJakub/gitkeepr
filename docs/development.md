@@ -18,7 +18,7 @@ Fork PRs never reach the persistent runner. They remain ordinary GitHub-hosted C
 
 ## v0.1 -> v0.2 self-development transition
 
-The first breaking v0.2 PR must coexist with the v0.1 default-branch gate while it is open. Candidate v0.2 core therefore recognizes old automatic trigger kinds only as clean no-ops. After the new gate is merged, those old trigger kinds are no longer emitted.
+The first breaking v0.2 PR must coexist with the v0.1 default-branch gate while it is open. Candidate v0.2 core therefore recognizes old automatic trigger kinds as clean no-ops. The v0.1 gate can also dispatch ordinary trusted PR comments as `trigger_kind=comment`; candidate v0.2 treats any trusted non-`/gitkeepr run` comment from that transition path as a no-op. After the new gate is merged, neither legacy path is emitted.
 
 This is a bootstrap compatibility shim, not part of the intended v0.2 user workflow.
 
