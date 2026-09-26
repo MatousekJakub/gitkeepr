@@ -103,8 +103,10 @@ After Review, finalization checks the live PR HEAD again before changing labels 
 
 Only completed logical results are represented as PR labels:
 
-- `gitkeepr:ready` — Review reached `PASS`;
-- `gitkeepr:needs-supervisor` — the bounded cycle budget ended with unresolved work.
+- `gitkeepr:ready` — the last completed run reached Review `PASS`;
+- `gitkeepr:needs-supervisor` — the last completed bounded run ended with unresolved work.
+
+The labels are summaries, not independent source-of-truth for a later HEAD. Because pushes do not trigger GitKeepr, supervisors must pair a label with the HEAD-bound GitKeepr Review marker before acting on it.
 
 Running/building/reviewing state belongs to GitHub Actions, not durable PR labels. Technical failures are Actions failures. `superseded` is recorded in the run only and does not mutate PR state.
 
