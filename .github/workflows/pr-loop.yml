@@ -30,7 +30,7 @@ jobs:
       GITKEEPR_BUILD_VARIANT: ${{ vars.GITKEEPR_BUILD_VARIANT }}
       GITKEEPR_REVIEW_MODEL: ${{ vars.GITKEEPR_REVIEW_MODEL }}
       GITKEEPR_REVIEW_VARIANT: ${{ vars.GITKEEPR_REVIEW_VARIANT }}
-      GITKEEPR_MAX_CYCLES: ${{ vars.GITKEEPR_MAX_CYCLES }}
+      GITKEEPR_FINALIZATION_CYCLES: ${{ vars.GITKEEPR_FINALIZATION_CYCLES || 2 }}
       GITKEEPR_APP_CLIENT_ID: ${{ vars.GITKEEPR_APP_CLIENT_ID }}
 
     steps:
@@ -41,7 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for name in GITKEEPR_BUILD_MODEL GITKEEPR_BUILD_VARIANT GITKEEPR_REVIEW_MODEL GITKEEPR_REVIEW_VARIANT GITKEEPR_MAX_CYCLES GITKEEPR_APP_CLIENT_ID; do
+          for name in GITKEEPR_BUILD_MODEL GITKEEPR_BUILD_VARIANT GITKEEPR_REVIEW_MODEL GITKEEPR_REVIEW_VARIANT GITKEEPR_FINALIZATION_CYCLES GITKEEPR_APP_CLIENT_ID; do
             if [[ -z "${!name:-}" ]]; then
               echo "::error::Missing repository variable: $name"
               missing=1
@@ -51,8 +51,8 @@ jobs:
             echo "::error::Missing repository secret: GITKEEPR_APP_PRIVATE_KEY"
             missing=1
           fi
-          if ! [[ "${GITKEEPR_MAX_CYCLES:-}" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::GITKEEPR_MAX_CYCLES must be a positive integer"
+          if ! [[ "${GITKEEPR_FINALIZATION_CYCLES:-}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::GITKEEPR_FINALIZATION_CYCLES must be a positive integer"
             missing=1
           fi
           exit "$missing"
@@ -525,8 +525,8 @@ jobs:
           pr_discussion="$(cat "$PR_DISCUSSION_FILE" 2>/dev/null || true)"
           final_head="$(git rev-parse HEAD)"
 
-          for cycle in $(seq 1 "$GITKEEPR_MAX_CYCLES"); do
-            echo "=== GitKeepr bounded finalization cycle $cycle/$GITKEEPR_MAX_CYCLES ==="
+          for cycle in $(seq 1 "$GITKEEPR_FINALIZATION_CYCLES"); do
+            echo "=== GitKeepr bounded finalization cycle $cycle/$GITKEEPR_FINALIZATION_CYCLES ==="
             start_head="$(git rev-parse HEAD)"
             previous_review="$(cat "$review_context" 2>/dev/null || true)"
 
