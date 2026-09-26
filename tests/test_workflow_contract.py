@@ -214,7 +214,7 @@ class WorkflowContractTests(unittest.TestCase):
 
     def test_only_completed_logical_results_are_durable_labels(self):
         ensure = CORE.split("- name: Ensure GitKeepr status labels", 1)[1].split(
-            "- name: Resolve and authorize trigger", 1
+            "- name: Check out exact PR head", 1
         )[0]
         self.assertIn("gitkeepr:ready", ensure)
         self.assertIn("gitkeepr:needs-supervisor", ensure)
@@ -227,6 +227,14 @@ class WorkflowContractTests(unittest.TestCase):
         publish = CORE.split("- name: Publish result and finalize status", 1)[1]
         self.assertIn("ready: 'gitkeepr:ready'", publish)
         self.assertIn("'needs-supervisor': 'gitkeepr:needs-supervisor'", publish)
+
+    def test_status_labels_are_not_provisioned_for_noop_or_duplicate_triggers(self):
+        authorize = CORE.index("- name: Resolve and authorize trigger")
+        ensure = CORE.index("- name: Ensure GitKeepr status labels")
+        self.assertLess(authorize, ensure)
+        ensure_step = CORE[ensure:].split("- name: Check out exact PR head", 1)[0]
+        self.assertIn("steps.context.outputs.skip != 'true'", ensure_step)
+        self.assertIn("steps.context.outputs.duplicate != 'true'", ensure_step)
 
     def test_technical_failures_do_not_publish_persistent_failure_state(self):
         final_token = CORE.split("- name: Create final GitKeepr App token", 1)[1].split(

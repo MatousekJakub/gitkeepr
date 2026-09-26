@@ -86,24 +86,6 @@ jobs:
             core.setOutput('name', username)
             core.setOutput('email', `${user.id}+${username}@users.noreply.github.com`)
 
-      - name: Ensure GitKeepr status labels
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        with:
-          github-token: ${{ steps.app-token.outputs.token }}
-          script: |
-            const labels = [
-              { name: 'gitkeepr:ready', color: '1f883d', description: 'Last completed GitKeepr finalization reached Review PASS' },
-              { name: 'gitkeepr:needs-supervisor', color: 'bf8700', description: 'Last completed GitKeepr finalization ended with unresolved work' },
-            ]
-            for (const label of labels) {
-              try {
-                await github.rest.issues.getLabel({ ...context.repo, name: label.name })
-              } catch (error) {
-                if (error.status !== 404) throw error
-                await github.rest.issues.createLabel({ ...context.repo, ...label })
-              }
-            }
-
       - name: Resolve and authorize trigger
         id: context
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
@@ -288,6 +270,25 @@ jobs:
         if: steps.context.outputs.skip != 'true' && steps.context.outputs.duplicate == 'true'
         shell: bash
         run: echo "Trigger ${{ steps.context.outputs.trigger_key }} was already handled; no agent work will run."
+
+      - name: Ensure GitKeepr status labels
+        if: steps.context.outputs.skip != 'true' && steps.context.outputs.duplicate != 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const labels = [
+              { name: 'gitkeepr:ready', color: '1f883d', description: 'Last completed GitKeepr finalization reached Review PASS' },
+              { name: 'gitkeepr:needs-supervisor', color: 'bf8700', description: 'Last completed GitKeepr finalization ended with unresolved work' },
+            ]
+            for (const label of labels) {
+              try {
+                await github.rest.issues.getLabel({ ...context.repo, name: label.name })
+              } catch (error) {
+                if (error.status !== 404) throw error
+                await github.rest.issues.createLabel({ ...context.repo, ...label })
+              }
+            }
 
       - name: Check out exact PR head
         if: steps.context.outputs.skip != 'true' && steps.context.outputs.duplicate != 'true'
