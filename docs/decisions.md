@@ -45,7 +45,7 @@ Suggested defaults when no value exists:
 - Build variant: `high`
 - Review model: `openai/gpt-5.6-sol`
 - Review variant: `high`
-- Max cycles: `2`
+- Finalization cycles: `2`
 
 Existing variable values become defaults on repeated `init`; Enter preserves them.
 

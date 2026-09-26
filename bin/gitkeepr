@@ -172,7 +172,12 @@ verify_project_vars() {
   for name in GITKEEPR_BUILD_MODEL GITKEEPR_BUILD_VARIANT GITKEEPR_REVIEW_MODEL GITKEEPR_REVIEW_VARIANT GITKEEPR_FINALIZATION_CYCLES; do
     value="$(current_var "$repo" "$name")"
     if [[ -n "$value" ]]; then
-      say "OK    Repository variable $name is configured"
+      if [[ "$name" == "GITKEEPR_FINALIZATION_CYCLES" && ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+        say "FAIL  Repository variable $name must be a positive integer"
+        missing=1
+      else
+        say "OK    Repository variable $name is configured"
+      fi
     else
       say "FAIL  Repository variable $name is missing or empty"
       missing=1

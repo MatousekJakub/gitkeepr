@@ -270,6 +270,14 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("./svc.sh start", add)
         self.assertIn('"$status" == "online"', add)
 
+    def test_runner_validation_rejects_invalid_finalization_cycle_budget(self):
+        helper = self.function_body("verify_project_vars", "sync_app_credentials")
+        self.assertIn(
+            '[[ "$name" == "GITKEEPR_FINALIZATION_CYCLES" && ! "$value" =~ ^[1-9][0-9]*$ ]]',
+            helper,
+        )
+        self.assertIn("must be a positive integer", helper)
+
     def test_runner_add_healthy_rerun_resyncs_without_reconfigure(self):
         add = self.function_body("runner_add", "runner_remove")
         healthy = add.split('if [[ -d "$dir" && -f "$dir/.runner"', 1)[1].split(
