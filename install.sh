@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${GITKEEPR_VERSION:-0.1.1}"
+VERSION="${GITKEEPR_VERSION:-0.2.0}"
 TAG="${GITKEEPR_TAG:-v${VERSION}}"
 RELEASE_BASE="${GITKEEPR_RELEASE_BASE:-https://github.com/MatousekJakub/gitkeepr/releases/download/${TAG}}"
 INSTALL_DIR="${GITKEEPR_INSTALL_DIR:-$HOME/.local/bin}"
