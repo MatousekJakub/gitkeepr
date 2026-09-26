@@ -2,8 +2,10 @@
 
 ## Result semantics
 
-- `gitkeepr:ready`: the bounded finalization run reached Review `PASS` for the current PR HEAD.
-- `gitkeepr:needs-supervisor`: GitKeepr completed its configured cycle budget but Review still returned `CONTINUE`.
+The two PR labels summarize the **last completed GitKeepr result**. Because ordinary pushes intentionally do not trigger GitKeepr, a later external commit can make a label stale relative to the new PR HEAD. A supervisor must therefore match the HEAD in the latest GitKeepr Review marker to the current PR HEAD before treating a label as authoritative.
+
+- `gitkeepr:ready`: the last bounded finalization run reached Review `PASS`.
+- `gitkeepr:needs-supervisor`: the last bounded finalization run completed its configured cycle budget while Review still returned `CONTINUE`.
 - `superseded`: another actor changed the PR HEAD while GitKeepr was working. The run exits without changing PR labels or publishing stale review output.
 - Actions failure: infrastructure, harness, credential, invalid-output, or other technical failure. No persistent failure label is written.
 
