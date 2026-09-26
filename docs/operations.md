@@ -1,39 +1,53 @@
 # Operations and Recovery
 
-## Status semantics
+## Result semantics
 
-- `gitkeepr:building`: Build is working.
-- `gitkeepr:reviewing`: Review is checking the current PR.
-- `gitkeepr:waiting-human`: the core loop is idle and waiting for external/human action. This does **not** mean CI is green or the PR is approved for merge.
-- `gitkeepr:blocked`: the core loop stopped because it cannot safely progress.
+- `gitkeepr:ready`: the bounded finalization run reached Review `PASS` for the current PR HEAD.
+- `gitkeepr:needs-supervisor`: GitKeepr completed its configured cycle budget but Review still returned `CONTINUE`.
+- `superseded`: another actor changed the PR HEAD while GitKeepr was working. The run exits without changing PR labels or publishing stale review output.
+- Actions failure: infrastructure, harness, credential, invalid-output, or other technical failure. No persistent failure label is written.
 
-## Recovery principles
+Neither `ready` nor Review `PASS` means repository CI is green or that the PR should be merged without further supervision.
 
-A blocked/failing source trigger is not marked successfully processed. A later trusted comment can start a fresh trigger.
+## Starting work
 
-A blocked state does not mean "AI may never touch this again". It means the core loop stopped and needs an external intervention. The intervention can be a human or an optional external helper when the helper can resolve the block without inventing a human product decision.
+Normal PR activity does not start GitKeepr.
 
-Examples:
+Use a trusted top-level PR comment containing exactly:
 
-- Infrastructure/transient error: rerun after correcting infrastructure.
-- Missing human choice A/B: helper must not choose for the human.
-- Clear actionable code/test finding: a trusted actionable comment may restart Build.
-- OAuth/provider issue: rerun `opencode auth login` as `github-runner`.
-- GitHub App key rotation: update the PEM file/server config as needed, then rerun `gitkeepr runner add owner/repo` to resync project credentials.
-- Broken runner: rerun `runner add`; unhealthy existing installation should offer automated reconfiguration.
+```
+/gitkeepr run
+```
 
-## Manual runner fallback
+or use the workflow's manual `workflow_dispatch` input.
 
-GitHub Settings → Actions → Runners → New self-hosted runner shows the official Download and Configure commands. This is a troubleshooting/bootstrap fallback, not the standard per-repository workflow.
+A new command starts a new bounded finalization attempt. Ordinary comments and reviews remain available to the agents as context for the next run.
+
+## Supervisor checkpoints
+
+`needs-supervisor` is an expected state. A human or ChatGPT supervisor should inspect the current diff, GitKeepr review output, repository CI, and relevant PR discussion, then choose one of:
+
+- fix the remaining issue directly;
+- add clarifying context to the PR and start another `/gitkeepr run`;
+- make a product decision that the worker must not invent;
+- leave the PR for later.
+
+A supervisor may also retry a technical Actions failure after repairing infrastructure or authentication.
+
+## Superseded runs
+
+A superseded run is not retried automatically. The newer PR HEAD is authoritative. Inspect that state first and explicitly start another run only when finalization is still useful.
+
+This rule intentionally allows ChatGPT, the user, another coding tool, or another process to make several commits without racing a GitKeepr run.
+
+## Common recovery
+
+- OpenCode/provider authentication: rerun `opencode auth login` as `github-runner`.
+- GitHub App key rotation: update the server key/configuration and rerun `gitkeepr runner add owner/repo`.
+- Broken runner: rerun `runner add`; unhealthy existing installations can be reconfigured.
+- Expired GitHub App installation token during a run: GitKeepr refreshes credentials and retries the credentialed push once.
+- External branch update: allow the current run to finish as `superseded`, then decide whether to start a fresh run.
 
 ## Resource contention
 
-V1 deliberately has no global concurrency control. If jobs overlap and problems appear, look for:
-
-- large run-time increases only under overlap;
-- sustained CPU/load pressure;
-- swap/memory pressure;
-- timeouts;
-- OOM kills.
-
-Only then add the smallest appropriate control.
+There is no global VPS concurrency manager. Repository-level GitHub Actions concurrency serializes GitKeepr runs for the same PR. Add broader resource controls only after observing real contention.
