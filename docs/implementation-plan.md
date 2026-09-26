@@ -18,17 +18,23 @@ The v0.2 redesign intentionally keeps GitKeepr small and bounded.
 - [x] preserve GitHub App credential refresh/retry and agent Git-boundary protections;
 - [x] retire the external-helper/no-build/direct-reply protocol;
 - [x] complete automated contract CI on the implementation PR;
-- [ ] complete live v0.2 smoke validation on the VPS.
+- [x] dogfood the implementation PR on the VPS for explicit activation, two-cycle `needs-supervisor`, non-recursive Build pushes, and real `superseded` behavior.
+
+Phase 1 is complete when those implementation contracts are green. The broader pre-release/rollout checklist in `docs/testing.md` is intentionally **not** a merge prerequisite for this implementation PR.
 
 ### Phase 2 — structural polish
 
-After the behavioral contract is validated:
+After the behavioral contract is merged and stable:
 
 - evaluate moving deterministic orchestration out of the monolithic YAML/Bash workflow into a small testable module;
 - define a thin harness boundary so OpenCode can later be replaced by or coexist with Codex CLI/Pi without changing the v0.2 workflow contract;
 - keep provisioning concerns separate from core finalization semantics where practical.
 
 Do not begin Phase 2 by adding abstractions for hypothetical needs. Use the validated v0.2 behavior as the contract.
+
+### Pre-release / rollout validation
+
+Before publishing v0.2.0 as operationally validated, finish the remaining smoke items in `docs/testing.md`, especially the `ready` path, manual dispatch/idempotence, intentional failure behavior, and fork isolation.
 
 ## Deliberate constraints
 
