@@ -12,7 +12,7 @@ v0.2 defaults to two Build -> Review cycles and finishes as `gitkeepr:ready` or 
 
 Standard target repositories are **private and trusted**. GitKeepr itself is public and uses a separate GitHub-hosted self-development gate so fork code never reaches the persistent runner.
 
-See `docs/testing.md` for the validated smoke matrix and `docs/known-issues.md` for the current validation status.
+See `docs/testing.md` for the smoke checklist and `docs/known-issues.md` for the current validation status.
 
 ## Install
 

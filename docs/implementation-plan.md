@@ -17,7 +17,7 @@ The v0.2 redesign intentionally keeps GitKeepr small and bounded.
 - [x] add PR-HEAD ownership checks and `superseded` semantics;
 - [x] preserve GitHub App credential refresh/retry and agent Git-boundary protections;
 - [x] retire the external-helper/no-build/direct-reply protocol;
-- [ ] complete automated contract CI on the implementation PR;
+- [x] complete automated contract CI on the implementation PR;
 - [ ] complete live v0.2 smoke validation on the VPS.
 
 ### Phase 2 — structural polish

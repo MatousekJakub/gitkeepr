@@ -4,7 +4,9 @@
 
 ## v0.2 validation status
 
-The v0.2 bounded-finalizer behavior is under implementation and has not yet completed the live smoke matrix in `docs/testing.md`.
+Automated contract CI is implemented in `.github/workflows/ci.yml` and covers the current workflow contracts and shell syntax checks.
+
+The v0.2 bounded-finalizer behavior has not yet completed the live smoke matrix in `docs/testing.md`.
 
 The following v0.1.x operational lessons are already addressed structurally by the v0.2 design:
 
