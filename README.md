@@ -1,14 +1,16 @@
 # GitKeepr
 
-GitKeepr is a small, GitHub-native AI PR loop built around GitHub Actions, a persistent self-hosted runner, OpenCode, and a GitHub App.
+GitKeepr is a small, explicitly triggered AI PR finalization worker built around GitHub Actions, a persistent self-hosted runner, OpenCode, and a GitHub App.
 
-GitHub PRs are the control plane. Build edits and tests the PR branch, the workflow owns Git/GitHub mutations, and Review independently checks the current HEAD until it returns `PASS` or the loop reaches a clear blocked state.
+The intended v0.2 workflow is ChatGPT/user first, GitHub PR/branch as the durable shared source of truth, and GitKeepr only when real project-environment Build/Review work is useful. A trusted `/gitkeepr run` starts a short bounded finalization run; ordinary commits, reviews, and comments do not.
 
-## V1 status
+## Status
 
-GitKeepr V1 is operationally validated for the tested Ubuntu/ARM64 server and repository workflows. Contract CI is green, and live smoke testing covered server/bootstrap lifecycle, private-repository runner lifecycle, real multi-cycle Build ↔ Review PR flows, no-code replies, trigger idempotence/suppression, blocked/retry behavior, public self-development, and fork isolation.
+The latest released line is v0.1.x. `main` is developing the breaking v0.2 bounded-finalizer behavior.
 
-Standard V1 target repositories are **private and trusted**. GitKeepr itself is public and uses a separate GitHub-hosted self-development gate so fork code never reaches the persistent runner.
+v0.2 defaults to two Build -> Review cycles and finishes as `gitkeepr:ready` or `gitkeepr:needs-supervisor`. If another actor changes the PR branch during a run, the stale run becomes `superseded` instead of racing the newer work.
+
+Standard target repositories are **private and trusted**. GitKeepr itself is public and uses a separate GitHub-hosted self-development gate so fork code never reaches the persistent runner.
 
 See `docs/testing.md` for the validated smoke matrix and `docs/known-issues.md` for the current validation status.
 
@@ -57,7 +59,7 @@ gitkeepr version
 
 ## Public self-development
 
-The public `MatousekJakub/gitkeepr` repository is the only V1 public persistent-runner exception. Its `gitkeepr init` path configures variables but does **not** create the standard caller. Public PR events first pass through `.github/workflows/self-gate.yml` on a GitHub-hosted runner; only same-repository PRs may dispatch the candidate `pr-loop.yml` to the persistent runner. Fork PRs are ignored by GitKeepr AI automation.
+The public `MatousekJakub/gitkeepr` repository is the only public persistent-runner exception. Its `gitkeepr init` path configures variables but does **not** create the standard caller. Explicit `/gitkeepr run` commands and manual dispatches first pass through `.github/workflows/self-gate.yml` on a GitHub-hosted runner; only same-repository PRs may dispatch the candidate `pr-loop.yml` to the persistent runner. Fork PRs are ignored by GitKeepr AI automation.
 
 ## Documentation
 
