@@ -10,7 +10,7 @@ The v0.2 redesign intentionally keeps GitKeepr small and bounded.
 
 - [x] explicit-only activation through exact trusted `/gitkeepr run` or manual dispatch;
 - [x] remove automatic PR-open/synchronize/review/ordinary-comment activation;
-- [x] default `GITKEEPR_MAX_CYCLES` to 2;
+- [x] default `GITKEEPR_FINALIZATION_CYCLES` to 2;
 - [x] make Build operate as a finalizer and address all safely actionable remaining work in a turn;
 - [x] replace transient/blocking status machine with `ready` and `needs-supervisor`;
 - [x] make exhausted cycles a successful supervisor checkpoint;
