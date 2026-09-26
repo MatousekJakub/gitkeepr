@@ -2,6 +2,19 @@
 
 > Human-owned source of truth. Preserve the approved architecture unless a human explicitly changes it.
 
+## Role
+
+GitKeepr v0.2 is an explicitly triggered, bounded PR finalization worker. It is not the primary product-planning or orchestration layer.
+
+The normal control flow is:
+
+1. ChatGPT/user prepares most of the change and opens or updates a PR.
+2. GitHub PR/branch is the durable shared source of truth.
+3. A trusted human or supervisor explicitly starts GitKeepr with `/gitkeepr run` or `workflow_dispatch`.
+4. GitKeepr gives the real project environment to Build and independent Review agents for at most `GITKEEPR_MAX_CYCLES`.
+5. The run finishes as `ready`, `needs-supervisor`, `superseded`, or a technical Actions failure.
+6. ChatGPT/human supervision decides what happens next.
+
 ## Components
 
 ### Target repository
@@ -12,32 +25,26 @@ For a standard private target repository, `gitkeepr init` creates exactly one ve
 
 It also configures repository variables. It does not create `.ai/plan.md`, `AGENTS.md`, a `.gitkeepr/` directory, or any other project files.
 
-The public upstream GitKeepr repository is a narrow self-development exception: `gitkeepr init` configures variables but creates no standard caller, because `.github/workflows/self-gate.yml` and `.github/workflows/pr-loop.yml` already define its gated execution path.
+The caller listens only to:
 
-The target caller listens to:
-
-- `pull_request`: `opened`, `synchronize`;
-- `pull_request_review`: `submitted`;
-- `issue_comment`: `created`;
+- trusted PR issue comments whose body is exactly `/gitkeepr run`;
 - `workflow_dispatch`.
 
-The caller is a cheap first trust/filter layer and invokes the reusable core at:
+Ordinary PR creation, pushes, comments, and reviews are context only. They do not start GitKeepr.
 
-`MatousekJakub/gitkeepr/.github/workflows/pr-loop.yml@vX.Y.Z`, where `vX.Y.Z` matches the installed CLI release
-
-The core repeats authoritative security checks before checkout or OpenCode execution. Standard target callers are release-pinned; upgrading the CLI and rerunning `gitkeepr init` is the explicit path to a newer core version.
+The public upstream GitKeepr repository is a narrow self-development exception. `.github/workflows/self-gate.yml` runs on a GitHub-hosted runner, proves that the PR comes from the same repository, and only then dispatches the candidate `pr-loop.yml` to the persistent runner.
 
 ### Reusable core
 
-`.github/workflows/pr-loop.yml` is intentionally allowed to remain a large, monolithic workflow. Do not modularize it merely for style.
-
-Its minimal trigger contract is:
+The reusable core accepts:
 
 - `pr_number`;
 - `trigger_kind`;
 - `trigger_source_id`.
 
-The core loads the actual PR/comment/review context through GitHub APIs.
+For v0.2, the active trigger kinds are `comment` for the exact command and `manual` for workflow dispatch. The core temporarily recognizes the old automatic trigger kinds only to ignore them safely while the self-development gate transitions from v0.1.x to v0.2.
+
+The core reloads authoritative PR/comment/review context through GitHub APIs before checkout.
 
 ### GitHub App
 
@@ -49,69 +56,62 @@ Required repository permissions:
 - Workflows: read/write;
 - Metadata: implicit read.
 
-Installation policy: **Only selected repositories**.
-
-The App is created manually. GitKeepr does not automate App creation or installation in V1.
-
-The App identity must never be hardcoded. The workflow derives the bot identity from the created App token.
+The App identity is derived dynamically. The private key is never exposed to Build/Review processes.
 
 ### Persistent runner
 
-V1 supports Ubuntu/Debian Linux with systemd on amd64 or arm64.
+Ubuntu/Debian Linux with systemd on amd64 or arm64 is supported. One `github-runner` user owns the coding harness authentication and runs repository-level Actions runner services with the `gitkeepr` label.
 
-One Linux user, `github-runner`, owns OpenCode auth and runs all Actions runner services. One repository-level Actions runner installation exists per managed repository. All use the custom label `gitkeepr`; workflows do not route on ARM64/X64.
+### Coding harness
 
-There is no global concurrency lock in V1. If real contention appears, solve the observed problem later.
+OpenCode remains the v0.2 implementation harness. Build/Review prompts are deliberately separated from workflow-owned Git/GitHub mutation. Harness replacement or abstraction is a later concern; the v0.2 behavioral contract must not depend on OpenCode-specific orchestration semantics.
 
-### OpenCode
+## Bounded Build / Review finalization
 
-OpenCode is installed for `github-runner`. `gitkeepr server init` always opens `opencode auth login`, then prints `opencode models` and stops. GitKeepr does not try to infer whether a specific provider is authenticated because OpenCode may also expose free models.
+Each cycle is:
 
-## Build / Review loop
+`Build -> workflow-owned commit/push when needed -> independent Review`
 
 Build:
 
-- reads the current repository and `.ai/plan.md` if present;
-- reads current trusted trigger feedback and trusted PR discussion;
-- verifies stale review findings against current HEAD;
-- implements only the first unfinished logical planned task unless the latest trusted instruction changes scope;
+- reads the current repository, optional plan, trusted human/Copilot discussion, and prior GitKeepr review;
+- treats the PR as an already-started implementation that needs finalization;
+- resolves all safely actionable remaining work it can identify in that turn;
 - runs relevant tests;
-- never owns Git metadata or GitHub metadata.
-
-Workflow:
-
-- detects Build file changes;
-- commits and pushes them using the GitHub App identity;
-- runs Review.
+- does not commit, push, create branches, or mutate GitHub metadata.
 
 Review:
 
-- does not edit files;
-- independently checks the full current PR scope;
-- returns `CONTINUE` when correctness/testing problems remain or planned work remains;
-- returns `PASS` only when the full current scope is complete and no still-relevant blocking feedback remains.
+- is read-only;
+- checks the full PR scope at the exact current HEAD;
+- returns `PASS` or `CONTINUE`;
+- binds its verdict marker to the reviewed HEAD.
 
-A newly produced `CONTINUE` is always handed back to Build once before no-progress protection can stop the loop. No-progress blocks only when Build has already received a `CONTINUE` for the current HEAD, makes no repository progress, and Review still returns `CONTINUE` on that same HEAD. `GITKEEPR_MAX_CYCLES` remains the hard upper bound.
+The default cycle budget is **2**. Repositories may explicitly choose a higher positive integer, but v0.2 is designed around short runs and external supervision rather than long autonomous convergence.
 
-## Status labels
+After the final allowed `CONTINUE`, GitKeepr exits successfully as `needs-supervisor`. That is a normal checkpoint, not an infrastructure failure.
 
-- `gitkeepr:building`
-- `gitkeepr:reviewing`
-- `gitkeepr:waiting-human`
-- `gitkeepr:blocked`
+## PR HEAD ownership
 
-The core creates them when needed. `gitkeepr:waiting-human` is the stable completed state after Review `PASS`; `gitkeepr:blocked` represents unresolved Review `CONTINUE` or another condition requiring human action. A trusted comment that only needs a direct reply must not erase that underlying stable state: an exact-current-HEAD `CONTINUE` remains blocked, an exact-current-HEAD `PASS` remains waiting-human, and otherwise the previous stable label is preserved when available.
+The run records the PR HEAD it started from. Before credentialed branch writes, GitKeepr re-reads the remote branch HEAD.
 
-## Idempotence
+If another actor changes the PR branch while the run is active, GitKeepr exits successfully as `superseded`. It does not rebase, merge, overwrite the newer branch, or publish stale review state.
 
-Triggers get deterministic keys. A successful handling writes a hidden processed marker. A blocked or failed run must **not** mark the source trigger as successfully processed.
+After Review, finalization checks the live PR HEAD again before changing labels or posting review output. A stale result is discarded.
 
-System comments and hidden markers are part of the protocol, not security credentials.
+## Durable result labels
 
-## `no-build`
+Only completed logical results are represented as PR labels:
 
-A trusted top-level comment containing:
+- `gitkeepr:ready` — Review reached `PASS`;
+- `gitkeepr:needs-supervisor` — the bounded cycle budget ended with unresolved work.
 
-`<!-- gitkeepr:no-build -->`
+Running/building/reviewing state belongs to GitHub Actions, not durable PR labels. Technical failures are Actions failures. `superseded` is recorded in the run only and does not mutate PR state.
 
-must not start a new Build loop. The comment still remains part of trusted PR discussion context for later runs.
+The finalizer also removes legacy v0.1.x status labels when it publishes a current v0.2 result.
+
+## Context and idempotence
+
+Trusted human PR comments and trusted human/Copilot reviews are context. Their existence never starts work.
+
+The exact `/gitkeepr run` command is excluded from agent discussion context. Successful command handling writes a deterministic hidden trigger marker so duplicate delivery does not repeat model work. Technical failures are retryable because they do not publish a successful trigger marker.
