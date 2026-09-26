@@ -22,7 +22,7 @@ jobs:
        github.event.comment.user.type != 'Bot' &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
        github.event.comment.body == '/gitkeepr run')
-    uses: MatousekJakub/gitkeepr/.github/workflows/pr-loop.yml@v0.1.1
+    uses: MatousekJakub/gitkeepr/.github/workflows/pr-loop.yml@v0.2.0
     with:
       pr_number: ${{ github.event_name == 'issue_comment' && github.event.issue.number || inputs.pr_number }}
       trigger_kind: ${{ github.event_name == 'issue_comment' && 'comment' || 'manual' }}
