@@ -150,10 +150,20 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("pr.head.repo?.full_name !== expectedRepo", authorize)
         self.assertIn("isTrustedHuman", authorize)
         self.assertIn("String(comment.body || '').trim() !== '/gitkeepr run'", authorize)
-        self.assertIn("Only an exact /gitkeepr run comment may start GitKeepr", authorize)
+        self.assertIn("Ignoring trusted non-command comment dispatched by the legacy v0.1 self-development gate", authorize)
+        self.assertIn("core.setOutput('skip', 'true')", authorize)
         self.assertIn("triggerKey = `command:${comment.id}`", authorize)
         self.assertIn("<!-- gitkeepr-trigger:v2 key=${triggerKey} -->", authorize)
         self.assertIn("body === '/gitkeepr run'", authorize)
+
+    def test_legacy_v01_trusted_non_command_comment_is_a_noop(self):
+        authorize = CORE.split("- name: Resolve and authorize trigger", 1)[1].split(
+            "- name: Deprecated automatic trigger ignored", 1
+        )[0]
+        self.assertIn("Trigger comment is not from a trusted human collaborator", authorize)
+        self.assertIn("Ignoring trusted non-command comment dispatched by the legacy v0.1 self-development gate", authorize)
+        self.assertIn("core.setOutput('skip', 'true')", authorize)
+        self.assertIn("core.setOutput('duplicate', 'false')", authorize)
 
     def test_legacy_automatic_trigger_kinds_are_transition_noops(self):
         authorize = CORE.split("- name: Resolve and authorize trigger", 1)[1].split(
