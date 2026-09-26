@@ -18,7 +18,9 @@ The v0.2 implementation PR has been dogfooded on the actual persistent VPS runne
 
 No remaining **implementation blocker** is known from those exercised paths.
 
-The full v0.2 release/rollout smoke matrix is intentionally not complete yet. Remaining validation includes the `ready`/PASS path, manual dispatch and duplicate-delivery behavior, intentional technical-failure cases, and post-merge fork/default-gate checks. Those items are tracked in `docs/testing.md` and should be completed before calling the v0.2 release operationally validated.
+Post-merge E2E on the actual persistent VPS runner additionally verified the v0.2 default-branch gate, ordinary-comment suppression, `ready`/PASS publication, duplicate command delivery suppression before agent work, and manual `workflow_dispatch`.
+
+No known implementation or release blocker remains from the exercised paths. Intentional provider/App-auth failure injection and a fresh post-merge fork PR were not performed for this release candidate; those remaining gaps are tracked in `docs/testing.md` and are not required to damage a healthy installation merely to satisfy the checklist.
 
 The following v0.1.x operational lessons are addressed structurally by the v0.2 design:
 
