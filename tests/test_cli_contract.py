@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused static tests for GitKeepr CLI safety and V1 lifecycle contracts."""
+"""Focused static tests for GitKeepr CLI safety and lifecycle contracts."""
 from pathlib import Path
 import subprocess
 import tempfile
@@ -23,6 +23,9 @@ class CliContractTests(unittest.TestCase):
         self.assertIn('releases/download/${TAG}', INSTALLER)
         self.assertIn('"$tmp" version', INSTALLER)
 
+    def test_project_init_defaults_to_two_finalization_cycles(self):
+        init = self.function_body("project_init", "project_doctor")
+        self.assertIn('max_cycles="$(prompt_value "Max cycles" "${current:-2}")"', init)
     def test_project_init_never_owns_git_history(self):
         init = self.function_body("project_init", "project_doctor")
         for forbidden in ("git add", "git commit", "git push", "git reset", "git stash"):
