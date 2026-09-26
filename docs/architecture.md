@@ -11,7 +11,7 @@ The normal control flow is:
 1. ChatGPT/user prepares most of the change and opens or updates a PR.
 2. GitHub PR/branch is the durable shared source of truth.
 3. A trusted human or supervisor explicitly starts GitKeepr with `/gitkeepr run` or `workflow_dispatch`.
-4. GitKeepr gives the real project environment to Build and independent Review agents for at most `GITKEEPR_MAX_CYCLES`.
+4. GitKeepr gives the real project environment to Build and independent Review agents for at most `GITKEEPR_FINALIZATION_CYCLES`.
 5. The run finishes as `ready`, `needs-supervisor`, `superseded`, or a technical Actions failure.
 6. ChatGPT/human supervision decides what happens next.
 
