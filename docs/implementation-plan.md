@@ -34,7 +34,9 @@ Do not begin Phase 2 by adding abstractions for hypothetical needs. Use the vali
 
 ### Pre-release / rollout validation
 
-Before publishing v0.2.0 as operationally validated, finish the remaining smoke items in `docs/testing.md`, especially the `ready` path, manual dispatch/idempotence, intentional failure behavior, and fork isolation.
+Post-merge E2E on the real persistent VPS runner has verified the `ready` path, explicit command path, ordinary-comment suppression, duplicate-delivery idempotence, manual dispatch, bounded `needs-supervisor`, and `superseded` behavior.
+
+Intentional provider/App-auth failure injection and a fresh post-merge fork PR remain optional validation gaps documented in `docs/testing.md`; neither is a known release blocker.
 
 ## Deliberate constraints
 
