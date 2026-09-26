@@ -84,7 +84,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('--variant "$GITKEEPR_BUILD_VARIANT"', loop)
         self.assertIn('--model "$GITKEEPR_REVIEW_MODEL"', loop)
         self.assertIn('--variant "$GITKEEPR_REVIEW_VARIANT"', loop)
-        self.assertIn('for cycle in $(seq 1 "$GITKEEPR_MAX_CYCLES")', loop)
+        self.assertIn('for cycle in $(seq 1 "$GITKEEPR_FINALIZATION_CYCLES")', loop)
 
     def test_build_does_not_own_git_operations(self):
         loop = CORE.split("- name: Run Build Review loop", 1)[1]
@@ -172,7 +172,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("result=needs-supervisor", loop)
         self.assertIn("supervisor action is required", loop)
         self.assertNotIn("stopping to avoid an infinite loop", loop)
-        self.assertNotIn("exhausted GITKEEPR_MAX_CYCLES", loop)
+        self.assertNotIn("exhausted GITKEEPR_FINALIZATION_CYCLES", loop)
 
     def test_pr_head_ownership_supersedes_stale_runs(self):
         loop = CORE.split("- name: Run Build Review loop", 1)[1].split(
