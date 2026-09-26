@@ -25,10 +25,9 @@ class CliContractTests(unittest.TestCase):
 
     def test_project_init_defaults_to_two_finalization_cycles(self):
         init = self.function_body("project_init", "project_doctor")
-        self.assertIn('if [[ "$current" == "15" ]]; then', init)
-        self.assertIn('current="2"', init)
-        self.assertIn("Migrating the v0.1 default max-cycle suggestion from 15 to 2", init)
-        self.assertIn('max_cycles="$(prompt_value "Max cycles" "${current:-2}")"', init)
+        self.assertIn('current="$(current_var "$repo" GITKEEPR_FINALIZATION_CYCLES || true)"', init)
+        self.assertIn('max_cycles="$(prompt_value "Finalization cycles" "${current:-2}")"', init)
+        self.assertIn('gh variable set GITKEEPR_FINALIZATION_CYCLES -R "$repo" --body "$max_cycles"', init)
     def test_project_init_never_owns_git_history(self):
         init = self.function_body("project_init", "project_doctor")
         for forbidden in ("git add", "git commit", "git push", "git reset", "git stash"):
