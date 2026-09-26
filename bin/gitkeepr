@@ -417,7 +417,7 @@ project_doctor() {
       say "OK    Repository visibility is ${visibility,,}"
     fi
 
-    for name in GITKEEPR_BUILD_MODEL GITKEEPR_BUILD_VARIANT GITKEEPR_REVIEW_MODEL GITKEEPR_REVIEW_VARIANT GITKEEPR_MAX_CYCLES; do
+    for name in GITKEEPR_BUILD_MODEL GITKEEPR_BUILD_VARIANT GITKEEPR_REVIEW_MODEL GITKEEPR_REVIEW_VARIANT GITKEEPR_FINALIZATION_CYCLES; do
       value="$(current_var "$repo" "$name")"
       if [[ -n "$value" ]]; then
         say "OK    Repository variable $name is configured"
