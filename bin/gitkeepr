@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.1.1"
+VERSION="0.2.0"
 RELEASE_TAG="v${VERSION}"
 RAW_BASE="${GITKEEPR_RAW_BASE:-https://raw.githubusercontent.com/MatousekJakub/gitkeepr/${RELEASE_TAG}}"
 WORKFLOW_PATH=".github/workflows/gitkeepr.yml"
