@@ -177,7 +177,11 @@ jobs:
               }
               if (!isTrustedHuman(comment)) return fail('Trigger comment is not from a trusted human collaborator')
               if (String(comment.body || '').trim() !== '/gitkeepr run') {
-                return fail('Only an exact /gitkeepr run comment may start GitKeepr')
+                core.notice('Ignoring trusted non-command comment dispatched by the legacy v0.1 self-development gate')
+                core.setOutput('skip', 'true')
+                core.setOutput('duplicate', 'false')
+                core.setOutput('trigger_key', '')
+                return
               }
               triggerKey = `command:${comment.id}`
               triggerAuthor = loginOf(comment)
