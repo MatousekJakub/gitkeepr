@@ -1,35 +1,31 @@
 # Development Workflow
 
-GitKeepr develops itself through the same PR loop it provides to managed repositories, with an additional GitHub-hosted gate because the GitKeepr repository is public.
+GitKeepr develops itself through a public-repository gate plus the same bounded finalization worker used by managed repositories.
 
 ## Normal change flow
 
-1. Start from the current `main`.
+1. Start from current `main`.
 2. Prepare the change on a same-repository branch.
-3. Open a pull request into `main`. The assistant normally prepares the branch changes and opens this PR.
-4. GitHub-hosted `.github/workflows/self-gate.yml` verifies that the PR head belongs to `MatousekJakub/gitkeepr`.
-5. Only after that check may the candidate branch's `.github/workflows/pr-loop.yml` be dispatched to the persistent `gitkeepr` runner.
-6. Build/Review may iterate on the branch until Review returns `PASS` or the loop reaches a blocked state.
-7. A human decides whether to merge and whether the accumulated changes justify a release.
+3. Open a pull request into `main`. Opening or updating the PR does **not** intentionally start GitKeepr v0.2.
+4. Run normal GitHub-hosted CI and perform any ChatGPT/human edits or reviews needed.
+5. When real-environment agent finalization is useful, post exactly `/gitkeepr run` on the PR.
+6. The default-branch `.github/workflows/self-gate.yml` verifies that the PR head belongs to `MatousekJakub/gitkeepr`, then dispatches the candidate branch's `pr-loop.yml`.
+7. Build/Review run for the configured bounded budget and finish as `ready` or `needs-supervisor`; an external branch change produces `superseded`.
+8. ChatGPT/human supervision performs the final review and decides whether another bounded run is useful.
+9. A human decides whether to merge and whether the accumulated changes justify a release.
 
 Fork PRs never reach the persistent runner. They remain ordinary GitHub-hosted CI/manual-review contributions.
 
+## v0.1 -> v0.2 self-development transition
+
+The first breaking v0.2 PR must coexist with the v0.1 default-branch gate while it is open. Candidate v0.2 core therefore recognizes old automatic trigger kinds only as clean no-ops. After the new gate is merged, those old trigger kinds are no longer emitted.
+
+This is a bootstrap compatibility shim, not part of the intended v0.2 user workflow.
+
 ## Main and releases
 
-`main` is the development line after `v0.1.0`. Published tags are immutable distribution points.
-
-Changing `main` does not silently change existing installations:
-
-- the installer is published as a GitHub Release asset;
-- an installed CLI reads its project template from its own release tag;
-- generated target callers pin the reusable workflow to that release tag.
-
-A later release is therefore an explicit promotion of tested `main` state. Release preparation and publication are documented in `docs/releasing.md`. Managed repositories upgrade explicitly by installing the newer CLI and rerunning `gitkeepr init` to review the caller diff.
+Published tags are immutable distribution points. Existing installations remain pinned to their release until the newer CLI is installed and `gitkeepr init` is rerun to review the caller update.
 
 ## Exceptional recovery
 
-Direct changes to `main` are reserved for recovery when the self-development path itself is broken badly enough that a normal same-repository PR cannot restore it. Such a repair should be minimal, documented, and followed by a normal PR-based verification as soon as the path is healthy again.
-
-## Scope discipline
-
-Post-V1 work should be driven by observed defects, operational needs, or explicit product decisions. The V1 non-goals in `docs/goal.md` remain non-goals until deliberately changed.
+Direct changes to `main` are reserved for recovery when the self-development path itself cannot restore service through a normal same-repository PR.
