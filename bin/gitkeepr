@@ -169,7 +169,7 @@ verify_app_access() {
 
 verify_project_vars() {
   local repo="$1" name value missing=0
-  for name in GITKEEPR_BUILD_MODEL GITKEEPR_BUILD_VARIANT GITKEEPR_REVIEW_MODEL GITKEEPR_REVIEW_VARIANT GITKEEPR_MAX_CYCLES; do
+  for name in GITKEEPR_BUILD_MODEL GITKEEPR_BUILD_VARIANT GITKEEPR_REVIEW_MODEL GITKEEPR_REVIEW_VARIANT GITKEEPR_FINALIZATION_CYCLES; do
     value="$(current_var "$repo" "$name")"
     if [[ -n "$value" ]]; then
       say "OK    Repository variable $name is configured"
@@ -325,19 +325,15 @@ project_init() {
   review_model="$(prompt_value "Review model" "${current:-openai/gpt-5.6-sol}")"
   current="$(current_var "$repo" GITKEEPR_REVIEW_VARIANT || true)"
   review_variant="$(prompt_value "Review variant" "${current:-high}")"
-  current="$(current_var "$repo" GITKEEPR_MAX_CYCLES || true)"
-  if [[ "$current" == "15" ]]; then
-    say "Migrating the v0.1 default max-cycle suggestion from 15 to 2; enter 15 explicitly to keep it."
-    current="2"
-  fi
-  max_cycles="$(prompt_value "Max cycles" "${current:-2}")"
-  [[ "$max_cycles" =~ ^[1-9][0-9]*$ ]] || die "Max cycles must be a positive integer."
+  current="$(current_var "$repo" GITKEEPR_FINALIZATION_CYCLES || true)"
+  max_cycles="$(prompt_value "Finalization cycles" "${current:-2}")"
+  [[ "$max_cycles" =~ ^[1-9][0-9]*$ ]] || die "Finalization cycles must be a positive integer."
 
   gh variable set GITKEEPR_BUILD_MODEL -R "$repo" --body "$build_model"
   gh variable set GITKEEPR_BUILD_VARIANT -R "$repo" --body "$build_variant"
   gh variable set GITKEEPR_REVIEW_MODEL -R "$repo" --body "$review_model"
   gh variable set GITKEEPR_REVIEW_VARIANT -R "$repo" --body "$review_variant"
-  gh variable set GITKEEPR_MAX_CYCLES -R "$repo" --body "$max_cycles"
+  gh variable set GITKEEPR_FINALIZATION_CYCLES -R "$repo" --body "$max_cycles"
 
   if [[ "$self_repo" -eq 1 ]]; then
     say "Public self-development uses .github/workflows/self-gate.yml and .github/workflows/pr-loop.yml; no standard caller file is created."
@@ -431,9 +427,9 @@ project_doctor() {
       fi
     done
 
-    value="$(current_var "$repo" GITKEEPR_MAX_CYCLES)"
+    value="$(current_var "$repo" GITKEEPR_FINALIZATION_CYCLES)"
     if [[ -n "$value" && ! "$value" =~ ^[1-9][0-9]*$ ]]; then
-      say "FAIL  GITKEEPR_MAX_CYCLES must be a positive integer"
+      say "FAIL  GITKEEPR_FINALIZATION_CYCLES must be a positive integer"
       failed=1
     fi
 
