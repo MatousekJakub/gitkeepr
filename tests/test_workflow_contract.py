@@ -242,6 +242,14 @@ class WorkflowContractTests(unittest.TestCase):
         invocation = 'env -u APP_PRIVATE_KEY_INPUT -u APP_PRIVATE_KEY_MATERIAL -u APP_TOKEN PATH="$AGENT_PATH" "$OPENCODE_BIN" run'
         self.assertEqual(loop.count(invocation), 2)
 
+    def test_remote_head_probe_has_data_only_stdout(self):
+        loop = CORE.split("- name: Run Build Review loop", 1)[1].split(
+            "- name: Create final GitKeepr App token", 1
+        )[0]
+        self.assertIn('echo "::add-mask::$APP_TOKEN" >&2', loop)
+        self.assertIn('echo "GitKeepr refreshed GitHub App credentials (expires $expires_at)." >&2', loop)
+        self.assertIn('actual="$(remote_head_with_app_token)"', loop)
+
     def test_optional_mcp_tools_remain_available_to_both_agents(self):
         loop = CORE.split("- name: Run Build Review loop", 1)[1]
         self.assertEqual(loop.count("Context7 and Chrome DevTools MCP tools are available on the runner."), 2)
