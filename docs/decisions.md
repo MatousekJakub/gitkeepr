@@ -11,7 +11,7 @@
 - Standard target-repository V1 support is private/trusted repositories only.
 - Published distribution is release-based. Standard target callers pin the reusable core to the same release tag as the CLI that generated them rather than `@main`.
 - `VERSION` is the repository source of truth for release preparation. `scripts/prepare-release.py` synchronizes release-coupled files and creates release notes, but never commits, tags, or publishes.
-- The reusable core may remain monolithic indefinitely if that stays practical.
+- v0.2 changes behavior before structure. Do not modularize the reusable core merely for style, but later extraction of deterministic orchestration from YAML/Bash is allowed when it improves testability or harness interchangeability.
 
 ## CLI UX
 
@@ -45,7 +45,7 @@ Suggested defaults when no value exists:
 - Build variant: `high`
 - Review model: `openai/gpt-5.6-sol`
 - Review variant: `high`
-- Max cycles: `15`
+- Max cycles: `2`
 
 Existing variable values become defaults on repeated `init`; Enter preserves them.
 
@@ -87,29 +87,34 @@ No remote model discovery is required in V1.
 
 ## Trigger policy
 
-Keep the tested trigger set:
+GitKeepr v0.2 is explicit-only.
 
-- PR opened;
-- PR synchronize;
-- submitted review;
-- trusted top-level PR comment;
-- manual workflow dispatch.
+The supported activation paths are:
 
-Bot-created `synchronize` events do not auto-trigger. A trusted human comment can explicitly trigger work afterward.
+- an exact trusted top-level PR comment: `/gitkeepr run`;
+- manual `workflow_dispatch`.
 
-Trusted comment/review filtering remains conservative. No polling, schedules, labels-as-triggers, or command parser is part of the core loop.
+PR creation, PR synchronize/push events, submitted reviews, and ordinary comments do not start Build/Review work. They remain normal GitHub activity and may become context for a later explicit run.
 
-## External helpers
+The command must come from a trusted human repository relationship (OWNER/MEMBER/COLLABORATOR). Bot comments are not generic activation commands.
 
-External helpers are optional supplements, not part of GitKeepr core. In the intended V1 model they act through the user's GitHub identity, as if the user posted the interaction.
+The v0.2 core may temporarily recognize v0.1 automatic trigger kinds only as no-ops so the first breaking self-development PR can be opened and synchronized while the v0.1 default-branch gate is still active.
 
-`<!-- gitkeepr:no-build -->` is used only when a helper is intentionally leaving information/PASS and no further Build action is required.
+## Supervisor model
 
-External-review marker format:
+GitKeepr is a bounded finalization worker, not the main orchestrator.
 
-`<!-- gitkeepr-external-review:v1 source=<source> head=<sha> -->`
+- ChatGPT/user normally performs planning and most initial implementation.
+- GitHub PR/branch is the durable shared source of truth.
+- Build/Review are used for real-environment work such as shell/tests/runtime/browser/MCP validation and independent review.
+- Default finalization budget is two Build -> Review cycles.
+- Review `PASS` produces `gitkeepr:ready`.
+- Exhausted bounded work with unresolved findings produces `gitkeepr:needs-supervisor` and is not an infrastructure failure.
+- Technical failures are represented by the Actions run, not a persistent failure label.
+- A changed external PR HEAD supersedes the current worker run. GitKeepr must never rebase/merge/overwrite the newer branch automatically.
+- ChatGPT Scheduled Tasks or a human may actively supervise, fix, restart, and finish the PR outside GitKeepr.
 
-The marker is audit/deduplication metadata for helpers; it is not a security credential.
+The v0.1 external-helper, `gitkeepr:no-build`, direct-reply, and ambient-comment-trigger protocols are retired in v0.2.
 
 ## GitKeepr development workflow
 
