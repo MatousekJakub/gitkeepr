@@ -93,7 +93,11 @@ class WorkflowContractTests(unittest.TestCase):
             loop,
         )
         self.assertIn('git -c core.hooksPath=/dev/null commit -m "gitkeepr: build cycle ${cycle}"', loop)
-        self.assertIn('git -c core.hooksPath=/dev/null push "$remote_url"', loop)
+        self.assertIn(
+            'git -c core.hooksPath=/dev/null push \\\n                "--force-with-lease=refs/heads/${HEAD_REF}:${expected}"',
+            loop,
+        )
+        self.assertIn('git_push_once "$expected"', loop)
         self.assertIn("push_head_with_app_token", loop)
         self.assertIn("including one retry with refreshed GitHub App credentials", loop)
 

@@ -471,7 +471,7 @@ jobs:
           }
 
           git_push_once() {
-            local auth_header remote_url protocol
+            local expected="$1" auth_header remote_url protocol
             ensure_app_token || return 1
             remote_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
             protocol="${GITHUB_SERVER_URL%%:*}"
@@ -484,13 +484,15 @@ jobs:
             GIT_CONFIG_COUNT=1 \
             GIT_CONFIG_KEY_0="http.${remote_url}.extraHeader" \
             GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth_header" \
-              git -c core.hooksPath=/dev/null push "$remote_url" "HEAD:refs/heads/${HEAD_REF}"
+              git -c core.hooksPath=/dev/null push \
+                "--force-with-lease=refs/heads/${HEAD_REF}:${expected}" \
+                "$remote_url" "HEAD:refs/heads/${HEAD_REF}"
           }
 
           push_head_with_app_token() {
             local expected="$1" actual
             ensure_remote_head "$expected"
-            if git_push_once; then
+            if git_push_once "$expected"; then
               return 0
             fi
             actual="$(remote_head_with_app_token || true)"
@@ -502,7 +504,7 @@ jobs:
             APP_TOKEN_EXPIRES_EPOCH=0
             refresh_app_token || return 1
             ensure_remote_head "$expected"
-            git_push_once
+            git_push_once "$expected"
           }
 
           git config user.name "$APP_BOT_NAME"
