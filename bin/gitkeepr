@@ -326,6 +326,10 @@ project_init() {
   current="$(current_var "$repo" GITKEEPR_REVIEW_VARIANT || true)"
   review_variant="$(prompt_value "Review variant" "${current:-high}")"
   current="$(current_var "$repo" GITKEEPR_MAX_CYCLES || true)"
+  if [[ "$current" == "15" ]]; then
+    say "Migrating the v0.1 default max-cycle suggestion from 15 to 2; enter 15 explicitly to keep it."
+    current="2"
+  fi
   max_cycles="$(prompt_value "Max cycles" "${current:-2}")"
   [[ "$max_cycles" =~ ^[1-9][0-9]*$ ]] || die "Max cycles must be a positive integer."
 
