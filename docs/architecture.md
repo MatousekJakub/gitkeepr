@@ -97,6 +97,8 @@ The run records the PR HEAD it started from. Before credentialed branch writes, 
 
 If another actor changes the PR branch while the run is active, GitKeepr exits successfully as `superseded`. It does not rebase, merge, overwrite the newer branch, or publish stale review state.
 
+Before the first Build turn, GitKeepr fetches the current base branch and requires that exact fetched base commit to be an ancestor of the PR HEAD. If the PR branch is behind or otherwise diverged from the current base, GitKeepr performs no Build/Review mutation, exits successfully as `needs-supervisor`, and asks the supervisor to update the PR branch and resolve any conflicts first. GitKeepr does not auto-merge or auto-rebase the base branch into a PR.
+
 After Review, finalization checks the live PR HEAD again before changing labels or posting review output. A stale result is discarded.
 
 ## Durable result labels
