@@ -326,6 +326,7 @@ jobs:
           PR_NUMBER: ${{ inputs.pr_number }}
           HEAD_REF: ${{ steps.context.outputs.head_ref }}
           BASE_REF: gitkeepr-base
+          BASE_BRANCH: ${{ steps.context.outputs.base_ref }}
           PR_DISCUSSION_FILE: ${{ runner.temp }}/gitkeepr-pr-discussion.md
           INITIAL_REVIEW_FILE: ${{ runner.temp }}/gitkeepr-initial-review.md
           REVIEW_DIR: ${{ runner.temp }}/gitkeepr-loop-reviews
@@ -532,6 +533,14 @@ jobs:
           pr_discussion="$(cat "$PR_DISCUSSION_FILE" 2>/dev/null || true)"
           final_head="$(git rev-parse HEAD)"
 
+          if ! git merge-base --is-ancestor "$BASE_REF" HEAD; then
+            printf 'result=needs-supervisor\n' >> "$GITKEEPR_OUTPUT_PATH"
+            printf 'result_head=%s\n' "$final_head" >> "$GITKEEPR_OUTPUT_PATH"
+            printf 'reason=base-not-ancestor\n' >> "$GITKEEPR_OUTPUT_PATH"
+            echo "::notice::GitKeepr refused Build/Review because current base branch $BASE_BRANCH is not an ancestor of PR HEAD $final_head. Update the PR branch with the latest base and rerun GitKeepr."
+            exit 0
+          fi
+
           for cycle in $(seq 1 "$GITKEEPR_FINALIZATION_CYCLES"); do
             echo "=== GitKeepr bounded finalization cycle $cycle/$GITKEEPR_FINALIZATION_CYCLES ==="
             start_head="$(git rev-parse HEAD)"
@@ -702,6 +711,7 @@ jobs:
           TRIGGER_KEY: ${{ steps.context.outputs.trigger_key }}
           RESULT: ${{ steps.loop.outputs.result }}
           RESULT_HEAD: ${{ steps.loop.outputs.result_head }}
+          RESULT_REASON: ${{ steps.loop.outputs.reason }}
         with:
           github-token: ${{ steps.final-app-token.outputs.token }}
           script: |
@@ -710,6 +720,7 @@ jobs:
             const prNumber = Number(process.env.PR_NUMBER)
             const result = String(process.env.RESULT || '')
             const resultHead = String(process.env.RESULT_HEAD || '')
+            const resultReason = String(process.env.RESULT_REASON || '')
             const targetByResult = {
               ready: 'gitkeepr:ready',
               'needs-supervisor': 'gitkeepr:needs-supervisor',
@@ -833,10 +844,16 @@ jobs:
             }
 
             if (await abortIfSuperseded('posting the completion comment')) return
+            const completionMessage = resultReason === 'base-not-ancestor'
+              ? [
+                  `GitKeepr did not start Build/Review because the current base branch \`${pr.base.ref}\` is not an ancestor of this PR HEAD.`,
+                  'Update the PR branch with the latest base, resolve any conflicts, and run `/gitkeepr run` again.',
+                ].join('\n\n')
+              : `GitKeepr finished with result: ${result}.`
             const { data: comment } = await github.rest.issues.createComment({
               ...context.repo,
               issue_number: prNumber,
-              body: [`GitKeepr finished with result: ${result}.`, triggerMarker].join('\n\n'),
+              body: [completionMessage, triggerMarker].join('\n\n'),
             })
             createdCommentIds.push(comment.id)
             await abortIfSuperseded('posting the completion comment')
