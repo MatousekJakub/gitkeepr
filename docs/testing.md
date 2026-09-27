@@ -12,7 +12,7 @@ bash -n bin/gitkeepr
 bash -n install.sh
 ```
 
-The tests protect the high-value contracts: release-pinned installation, trust-before-checkout, explicit-only triggering, same-repository public self-development, configured Build/Review models, exact-HEAD Review verdicts, bounded-cycle outcomes, PR-HEAD ownership/supersede behavior, success-only trigger markers, credential isolation/refresh, and full-SHA third-party Action pinning.
+The tests protect the high-value contracts: release-pinned installation, trust-before-checkout, explicit-only triggering, same-repository public self-development, configured Build/Review models, exact-HEAD Review verdicts, bounded-cycle outcomes, PR-HEAD ownership/supersede behavior, current-base ancestry preflight, success-only trigger markers, credential isolation/refresh, and full-SHA third-party Action pinning.
 
 Ordinary repository CI remains independent of the AI Review verdict. GitKeepr does not impose a universal verification command on target projects; Build chooses relevant tests for the current repository/task.
 
@@ -58,6 +58,11 @@ Before calling a v0.2 release operationally validated, exercise the remaining pa
 - [x] Confirm the stale run becomes `superseded`.
 - [x] Confirm it does not overwrite HEAD B or publish stale Review output/result state.
 - [x] Start a fresh explicit run on the newer HEAD and confirm normal operation.
+
+### Base freshness
+
+- [ ] Start GitKeepr on a PR whose current base commit is not an ancestor of the PR HEAD.
+- [ ] Confirm GitKeepr creates no Build commit, does not merge/rebase automatically, returns `gitkeepr:needs-supervisor`, and asks for the branch to be updated before rerunning.
 
 ### Failures
 
