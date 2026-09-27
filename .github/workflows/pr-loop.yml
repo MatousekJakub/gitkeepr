@@ -514,15 +514,18 @@ jobs:
           TRUSTED_GIT_CONFIG_SHA="$(sha256sum "$GIT_CONFIG_PATH" | awk '{print $1}')"
 
           assert_agent_git_boundary() {
-            local expected_head="$1" agent_name="$2" actual_head actual_branch config_sha
+            local expected_head="$1" agent_name="$2" actual_head actual_branch actual_base config_sha
             actual_head="$(git rev-parse HEAD)"
             actual_branch="$(git symbolic-ref --quiet --short HEAD || true)"
+            actual_base="$(git rev-parse "$BASE_REF" 2>/dev/null || true)"
             [[ -f "$GIT_CONFIG_PATH" ]] || fail "$agent_name agent removed repository Git config."
             config_sha="$(sha256sum "$GIT_CONFIG_PATH" | awk '{print $1}')"
             [[ "$actual_head" == "$expected_head" ]] ||
               fail "$agent_name agent changed Git HEAD from $expected_head to $actual_head; Git operations are workflow-owned."
             [[ "$actual_branch" == "$HEAD_REF" ]] ||
               fail "$agent_name agent changed the checked-out branch from $HEAD_REF to ${actual_branch:-detached}; Git operations are workflow-owned."
+            [[ "$actual_base" == "$TRUSTED_BASE_HEAD" ]] ||
+              fail "$agent_name agent changed the checked-out base ref from $TRUSTED_BASE_HEAD to ${actual_base:-missing}; review scope is no longer trusted."
             [[ "$config_sha" == "$TRUSTED_GIT_CONFIG_SHA" ]] ||
               fail "$agent_name agent modified repository Git config; refusing credentialed Git operations with agent-controlled config."
           }
@@ -540,6 +543,7 @@ jobs:
             echo "::notice::GitKeepr refused Build/Review because current base branch $BASE_BRANCH is not an ancestor of PR HEAD $final_head. Update the PR branch with the latest base and rerun GitKeepr."
             exit 0
           fi
+          TRUSTED_BASE_HEAD="$(git rev-parse "$BASE_REF")"
 
           for cycle in $(seq 1 "$GITKEEPR_FINALIZATION_CYCLES"); do
             echo "=== GitKeepr bounded finalization cycle $cycle/$GITKEEPR_FINALIZATION_CYCLES ==="

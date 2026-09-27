@@ -54,3 +54,5 @@ Symptoms worth checking on a small VPS include unusually slow concurrent jobs, s
 A v0.2 worker may write the PR branch only while the remote branch still equals the HEAD it expects. The worker checks the remote branch before credentialed pushes and treats any external change as `superseded`.
 
 Before publishing labels or Review output, the finalizer reloads the PR and requires its live HEAD to match the reviewed result HEAD. Stale runs therefore do not publish authoritative state over newer work.
+
+The Build and Review agents must also preserve the fetched local base ref. The workflow records its commit before agent execution and rejects any agent that rewrites that ref, so Review cannot silently compare the PR against an agent-controlled base.

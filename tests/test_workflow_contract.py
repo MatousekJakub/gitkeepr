@@ -216,6 +216,15 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("github.rest.issues.deleteComment", publish)
         self.assertIn("originalStatusLabels", publish)
 
+    def test_agent_boundary_preserves_the_fetched_base_ref(self):
+        loop = CORE.split("- name: Run Build Review loop", 1)[1].split(
+            "- name: Create final GitKeepr App token", 1
+        )[0]
+        self.assertIn('TRUSTED_BASE_HEAD="$(git rev-parse "$BASE_REF")"', loop)
+        self.assertIn('actual_base="$(git rev-parse "$BASE_REF" 2>/dev/null || true)"', loop)
+        self.assertIn('[[ "$actual_base" == "$TRUSTED_BASE_HEAD" ]]', loop)
+        self.assertIn("review scope is no longer trusted", loop)
+
     def test_diverged_base_is_rejected_before_build_review(self):
         loop = CORE.split("- name: Run Build Review loop", 1)[1].split(
             "- name: Create final GitKeepr App token", 1
