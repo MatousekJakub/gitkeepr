@@ -535,15 +535,17 @@ jobs:
           review_context="$INITIAL_REVIEW_FILE"
           pr_discussion="$(cat "$PR_DISCUSSION_FILE" 2>/dev/null || true)"
           final_head="$(git rev-parse HEAD)"
+          TRUSTED_BASE_HEAD="$(git rev-parse "$BASE_REF")"
 
           if ! git merge-base --is-ancestor "$BASE_REF" HEAD; then
             printf 'result=needs-supervisor\n' >> "$GITKEEPR_OUTPUT_PATH"
             printf 'result_head=%s\n' "$final_head" >> "$GITKEEPR_OUTPUT_PATH"
+            printf 'result_base_ref=%s\n' "$BASE_BRANCH" >> "$GITKEEPR_OUTPUT_PATH"
+            printf 'result_base_sha=%s\n' "$TRUSTED_BASE_HEAD" >> "$GITKEEPR_OUTPUT_PATH"
             printf 'reason=base-not-ancestor\n' >> "$GITKEEPR_OUTPUT_PATH"
             echo "::notice::GitKeepr refused Build/Review because current base branch $BASE_BRANCH is not an ancestor of PR HEAD $final_head. Update the PR branch with the latest base and rerun GitKeepr."
             exit 0
           fi
-          TRUSTED_BASE_HEAD="$(git rev-parse "$BASE_REF")"
 
           for cycle in $(seq 1 "$GITKEEPR_FINALIZATION_CYCLES"); do
             echo "=== GitKeepr bounded finalization cycle $cycle/$GITKEEPR_FINALIZATION_CYCLES ==="
@@ -682,6 +684,8 @@ jobs:
             if [[ "$verdict" == "pass" ]]; then
               printf 'result=ready\n' >> "$GITKEEPR_OUTPUT_PATH"
               printf 'result_head=%s\n' "$current_head" >> "$GITKEEPR_OUTPUT_PATH"
+              printf 'result_base_ref=%s\n' "$BASE_BRANCH" >> "$GITKEEPR_OUTPUT_PATH"
+              printf 'result_base_sha=%s\n' "$TRUSTED_BASE_HEAD" >> "$GITKEEPR_OUTPUT_PATH"
               echo "GitKeepr reached PASS at $current_head after $cycle cycle(s)."
               exit 0
             fi
@@ -691,6 +695,8 @@ jobs:
 
           printf 'result=needs-supervisor\n' >> "$GITKEEPR_OUTPUT_PATH"
           printf 'result_head=%s\n' "$final_head" >> "$GITKEEPR_OUTPUT_PATH"
+          printf 'result_base_ref=%s\n' "$BASE_BRANCH" >> "$GITKEEPR_OUTPUT_PATH"
+          printf 'result_base_sha=%s\n' "$TRUSTED_BASE_HEAD" >> "$GITKEEPR_OUTPUT_PATH"
           echo "GitKeepr used its bounded cycle budget without reaching PASS; supervisor action is required."
           exit 0
 
@@ -715,6 +721,8 @@ jobs:
           TRIGGER_KEY: ${{ steps.context.outputs.trigger_key }}
           RESULT: ${{ steps.loop.outputs.result }}
           RESULT_HEAD: ${{ steps.loop.outputs.result_head }}
+          RESULT_BASE_REF: ${{ steps.loop.outputs.result_base_ref }}
+          RESULT_BASE_SHA: ${{ steps.loop.outputs.result_base_sha }}
           RESULT_REASON: ${{ steps.loop.outputs.reason }}
         with:
           github-token: ${{ steps.final-app-token.outputs.token }}
@@ -724,27 +732,29 @@ jobs:
             const prNumber = Number(process.env.PR_NUMBER)
             const result = String(process.env.RESULT || '')
             const resultHead = String(process.env.RESULT_HEAD || '')
+            const resultBaseRef = String(process.env.RESULT_BASE_REF || '')
+            const resultBaseSha = String(process.env.RESULT_BASE_SHA || '')
             const resultReason = String(process.env.RESULT_REASON || '')
             const targetByResult = {
               ready: 'gitkeepr:ready',
               'needs-supervisor': 'gitkeepr:needs-supervisor',
             }
             const target = targetByResult[result]
-            if (!target || !resultHead) {
+            if (!target || !resultHead || !resultBaseRef || !resultBaseSha) {
               core.setFailed(`Invalid GitKeepr logical result: ${result || '(missing)'}`)
               return
             }
 
             const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: prNumber })
-            if (pr.head.sha !== resultHead) {
-              core.notice(`GitKeepr result for ${resultHead} was superseded by current PR HEAD ${pr.head.sha}; no PR state will be changed`)
+            if (pr.head.sha !== resultHead || pr.base.ref !== resultBaseRef || pr.base.sha !== resultBaseSha) {
+              core.notice(`GitKeepr result for ${resultHead} was superseded by current PR state (head ${pr.head.sha}, base ${pr.base.ref}@${pr.base.sha}); no PR state will be changed`)
               return
             }
 
-            const assertCurrentHead = async operation => {
+            const assertCurrentState = async operation => {
               const { data: currentPr } = await github.rest.pulls.get({ ...context.repo, pull_number: prNumber })
-              if (currentPr.head.sha !== resultHead) {
-                core.notice(`GitKeepr result for ${resultHead} was superseded before ${operation} by current PR HEAD ${currentPr.head.sha}; aborting publication`)
+              if (currentPr.head.sha !== resultHead || currentPr.base.ref !== resultBaseRef || currentPr.base.sha !== resultBaseSha) {
+                core.notice(`GitKeepr result for ${resultHead} was superseded before ${operation} by current PR state (head ${currentPr.head.sha}, base ${currentPr.base.ref}@${currentPr.base.sha}); aborting publication`)
                 return false
               }
               return true
@@ -798,11 +808,11 @@ jobs:
               }
             }
             const supersede = async operation => {
-              core.notice(`Rolling back GitKeepr publication after ${operation} detected a newer PR HEAD`)
+              core.notice(`Rolling back GitKeepr publication after ${operation} detected changed PR state`)
               await restorePublication()
             }
             const abortIfSuperseded = async operation => {
-              if (await assertCurrentHead(operation)) return false
+              if (await assertCurrentState(operation)) return false
               await supersede(operation)
               return true
             }

@@ -204,9 +204,15 @@ class WorkflowContractTests(unittest.TestCase):
         )[0]
         self.assertIn("steps.loop.outputs.result != 'superseded'", final_token)
         publish = CORE.split("- name: Publish result and finalize status", 1)[1]
-        self.assertIn("if (pr.head.sha !== resultHead)", publish)
+        self.assertIn("if (pr.head.sha !== resultHead ||", publish)
+        self.assertIn("RESULT_BASE_REF: ${{ steps.loop.outputs.result_base_ref }}", publish)
+        self.assertIn("RESULT_BASE_SHA: ${{ steps.loop.outputs.result_base_sha }}", publish)
+        self.assertIn("pr.base.ref !== resultBaseRef", publish)
+        self.assertIn("pr.base.sha !== resultBaseSha", publish)
         self.assertIn("no PR state will be changed", publish)
-        self.assertIn("const assertCurrentHead = async operation", publish)
+        self.assertIn("const assertCurrentState = async operation", publish)
+        self.assertIn("currentPr.base.ref !== resultBaseRef", publish)
+        self.assertIn("currentPr.base.sha !== resultBaseSha", publish)
         self.assertIn("abortIfSuperseded(`removing ${label}`)", publish)
         self.assertIn("abortIfSuperseded(`adding ${target}`)", publish)
         self.assertIn("abortIfSuperseded(`posting review ${reviewFiles[index]}`)", publish)
@@ -233,6 +239,8 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn(guard, loop)
         self.assertLess(loop.index(guard), loop.index('for cycle in $(seq 1 "$GITKEEPR_FINALIZATION_CYCLES")'))
         self.assertIn("reason=base-not-ancestor", loop)
+        self.assertIn("result_base_ref=%s", loop)
+        self.assertIn("result_base_sha=%s", loop)
         self.assertIn("refused Build/Review because current base branch", loop)
         self.assertNotIn('git merge "$BASE_REF"', loop)
         self.assertNotIn('git rebase "$BASE_REF"', loop)
@@ -242,6 +250,20 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("resultReason === 'base-not-ancestor'", publish)
         self.assertIn("did not start Build/Review because the current base branch", publish)
         self.assertIn("Update the PR branch with the latest base", publish)
+
+    def test_publication_is_bound_to_the_startup_base_snapshot(self):
+        loop = CORE.split("- name: Run Build Review loop", 1)[1].split(
+            "- name: Create final GitKeepr App token", 1
+        )[0]
+        self.assertIn('TRUSTED_BASE_HEAD="$(git rev-parse "$BASE_REF")"', loop)
+        self.assertIn("printf 'result_base_ref=%s\\n' \"$BASE_BRANCH\"", loop)
+        self.assertIn("printf 'result_base_sha=%s\\n' \"$TRUSTED_BASE_HEAD\"", loop)
+
+        publish = CORE.split("- name: Publish result and finalize status", 1)[1]
+        self.assertIn("const resultBaseRef = String(process.env.RESULT_BASE_REF || '')", publish)
+        self.assertIn("const resultBaseSha = String(process.env.RESULT_BASE_SHA || '')", publish)
+        self.assertIn("current PR state", publish)
+
     def test_only_completed_logical_results_are_durable_labels(self):
         ensure = CORE.split("- name: Ensure GitKeepr status labels", 1)[1].split(
             "- name: Check out exact PR head", 1
