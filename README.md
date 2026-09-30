@@ -1,5 +1,7 @@
 # GitKeepr
 
+> **Deprecated / legacy.** This repository is retained for history only. GitKeepr is no longer used in the active development workflow and its AI/self-development workflows are disabled.
+
 GitKeepr is a small, explicitly triggered AI PR finalization worker built around GitHub Actions, a persistent self-hosted runner, OpenCode, and a GitHub App.
 
 The intended v0.2 workflow is ChatGPT/user first, GitHub PR/branch as the durable shared source of truth, and GitKeepr only when real project-environment Build/Review work is useful. A trusted `/gitkeepr run` starts a short bounded finalization run; ordinary commits, reviews, and comments do not.
